@@ -6,4 +6,5 @@ package com.example.janggi2.presentation.navigation
 sealed class Screen(val route: String) {
     data object Game : Screen("game")
     data object SavedGames : Screen("saved_games")
+    data object Import : Screen("import")
 }

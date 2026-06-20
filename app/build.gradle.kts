@@ -70,6 +70,20 @@ dependencies {
     // Navigation
     implementation(libs.navigation.compose)
 
+    // ML Kit
+    implementation(libs.mlkit.text.recognition.korean)
+    implementation(libs.mlkit.text.recognition.chinese)
+    implementation(libs.kotlinx.coroutines.play.services)
+
+    // OpenCV for circle detection
+    implementation(libs.opencv)
+
+    // Coil for image loading
+    implementation(libs.coil.compose)
+
+    // Material Icons Extended
+    implementation(libs.androidx.compose.material.icons.extended)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

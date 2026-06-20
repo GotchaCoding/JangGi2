@@ -1,0 +1,245 @@
+package com.example.janggi2.data.imageprocessing
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.net.Uri
+import android.util.Log
+import com.example.janggi2.domain.model.Piece
+import com.example.janggi2.domain.model.Player
+import com.example.janggi2.domain.model.Position
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * 장기판 인식 서비스
+ *
+ * MVP: 그리드 분할 + 색상 감지 + 모든 기물을 "차"로 인식
+ */
+@Singleton
+class BoardRecognitionService @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val boardDetector: BoardDetector
+) {
+    companion object {
+        private const val TAG = "BoardRecognition"
+    }
+
+    /**
+     * MVP: 90셀 균등 분할 + 색상 기반 감지
+     *
+     * @param imageUri URI of the image to process
+     * @return Result containing detected pieces
+     */
+    suspend fun extractText(imageUri: Uri): Result<ExtractedText> {
+        return try {
+            Log.d(TAG, "=== Board Recognition Started (MVP: Grid + Color) ===")
+
+            // 1. Load image
+            val bitmap = loadAndDownsampleImage(imageUri)
+                ?: return Result.failure(Exception("이미지를 불러올 수 없습니다"))
+
+            Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}")
+
+            // 2. Detect board region (center estimation)
+            val boardRegion = boardDetector.estimateBoardRegion(bitmap)
+            Log.i(TAG, "Board region: ${boardRegion.width()}x${boardRegion.height()}")
+
+            // 3. Split into 9×10 grid
+            val cells = boardDetector.splitIntoCells(bitmap, boardRegion)
+            Log.d(TAG, "Split into 10 rows × 9 cols = 90 cells")
+
+            // 4. Check each cell for pieces (color-based)
+            val detectedPieces = mutableListOf<DetectedPieceWithPosition>()
+            var checkedCells = 0
+
+            for (row in 0 until 10) {
+                for (col in 0 until 9) {
+                    checkedCells++
+                    val cellBitmap = cells[row][col]
+                    val position = Position(col, row)
+
+                    // Detect piece by color
+                    val dominantColor = detectDominantColor(cellBitmap)
+
+                    if (dominantColor != DominantColor.EMPTY) {
+                        // Determine player from color
+                        val player = when (dominantColor) {
+                            DominantColor.RED -> Player.CHO
+                            DominantColor.BLUE -> Player.HAN
+                            DominantColor.EMPTY -> continue
+                        }
+
+                        // MVP: All detected pieces are "Chariot" (차)
+                        val piece = Piece.Chariot(player, position)
+
+                        detectedPieces.add(
+                            DetectedPieceWithPosition(
+                                position = position,
+                                piece = piece,
+                                confidence = 0.7f  // Medium confidence (MVP)
+                            )
+                        )
+
+                        Log.d(TAG, "[$row,$col] ✅ Detected: 차 $player (color-based)")
+                    } else {
+                        Log.v(TAG, "[$row,$col] Empty")
+                    }
+                }
+            }
+
+            Log.d(TAG, "=== Recognition Complete ===")
+            Log.d(TAG, "Pieces detected: ${detectedPieces.size}/$checkedCells cells")
+
+            val choCount = detectedPieces.count { it.piece.player == Player.CHO }
+            val hanCount = detectedPieces.count { it.piece.player == Player.HAN }
+            Log.d(TAG, "Distribution: CHO=$choCount, HAN=$hanCount")
+
+            if (detectedPieces.isEmpty()) {
+                return Result.failure(Exception("기물을 감지하지 못했습니다"))
+            }
+
+            Result.success(
+                ExtractedText(
+                    detectedPieces = detectedPieces,
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Board recognition failed", e)
+            Result.failure(Exception("기물 인식 실패: ${e.message}", e))
+        }
+    }
+
+    /**
+     * 지배적인 색상 감지
+     */
+    private fun detectDominantColor(bitmap: Bitmap): DominantColor {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        if (width == 0 || height == 0) return DominantColor.EMPTY
+
+        var redCount = 0
+        var blueCount = 0
+        var totalColoredPixels = 0
+
+        // 전체 픽셀 샘플링 (성능을 위해 step 사용)
+        val step = maxOf(1, width / 16)
+
+        for (y in 0 until height step step) {
+            for (x in 0 until width step step) {
+                val pixel = bitmap.getPixel(x, y)
+                val hsv = FloatArray(3)
+                Color.colorToHSV(pixel, hsv)
+
+                val hue = hsv[0]
+                val saturation = hsv[1]
+                val value = hsv[2]
+
+                // 채도와 명도가 충분한 픽셀만 카운트
+                if (saturation > 0.2f && value > 0.3f) {
+                    when {
+                        // 빨간색: 0-30도 또는 330-360도
+                        (hue in 0f..30f || hue in 330f..360f) -> {
+                            redCount++
+                            totalColoredPixels++
+                        }
+                        // 파란색: 200-260도
+                        hue in 200f..260f -> {
+                            blueCount++
+                            totalColoredPixels++
+                        }
+                    }
+                }
+            }
+        }
+
+        // 최소 10개 이상의 색상 픽셀이 있어야 함
+        if (totalColoredPixels < 10) return DominantColor.EMPTY
+
+        val redRatio = redCount.toFloat() / totalColoredPixels
+        val blueRatio = blueCount.toFloat() / totalColoredPixels
+
+        return when {
+            redRatio > 0.15f && redRatio > blueRatio -> DominantColor.RED
+            blueRatio > 0.15f && blueRatio > redRatio -> DominantColor.BLUE
+            else -> DominantColor.EMPTY
+        }
+    }
+
+    /**
+     * Loads an image from URI and downsamples it to 2048px width.
+     */
+    private fun loadAndDownsampleImage(imageUri: Uri): Bitmap? {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(imageUri)
+                ?: return null
+
+            // First, get image dimensions without loading the full bitmap
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream.close()
+
+            Log.d(TAG, "Original image size: ${options.outWidth}x${options.outHeight}")
+
+            // Calculate sample size to downsample to ~2048px width
+            val targetWidth = 2048
+            val sampleSize = if (options.outWidth > targetWidth) {
+                options.outWidth / targetWidth
+            } else {
+                1
+            }
+
+            // Load the downsampled bitmap
+            val inputStream2 = context.contentResolver.openInputStream(imageUri)
+                ?: return null
+
+            val loadOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+            }
+
+            val bitmap = BitmapFactory.decodeStream(inputStream2, null, loadOptions)
+            inputStream2.close()
+
+            Log.d(TAG, "Loaded bitmap size: ${bitmap?.width}x${bitmap?.height}")
+
+            bitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load image", e)
+            null
+        }
+    }
+
+    /**
+     * Data class containing extracted pieces and image dimensions.
+     */
+    data class ExtractedText(
+        val detectedPieces: List<DetectedPieceWithPosition>,
+        val imageWidth: Int,
+        val imageHeight: Int
+    )
+
+    /**
+     * 검출된 기물과 위치 정보
+     */
+    data class DetectedPieceWithPosition(
+        val position: Position,
+        val piece: Piece,
+        val confidence: Float
+    )
+
+    /**
+     * 색상 정보
+     */
+    enum class DominantColor {
+        RED,    // 빨강 (초)
+        BLUE,   // 파랑 (한)
+        EMPTY   // 빈 칸
+    }
+}

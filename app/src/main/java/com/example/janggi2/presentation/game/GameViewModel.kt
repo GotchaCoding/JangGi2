@@ -340,6 +340,20 @@ class GameViewModel @Inject constructor(
     }
 
     /**
+     * Loads an imported game state from image recognition.
+     */
+    fun loadImportedGame(gameState: GameState) {
+        _uiState.value = GameUiState(
+            gameState = gameState,
+            selectedPiece = null,
+            validMoves = emptyList(),
+            showGameOverDialog = false,
+            isLoading = false
+        )
+        autoSave()
+    }
+
+    /**
      * Enters replay mode.
      */
     private fun enterReplayMode() {

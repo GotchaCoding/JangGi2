@@ -33,6 +33,7 @@ fun GameControls(
     onRedoClick: () -> Unit,
     onSaveClick: (String) -> Unit,
     onLoadClick: () -> Unit,
+    onImportClick: () -> Unit,
     onResetClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -65,7 +66,7 @@ fun GameControls(
             }
         }
 
-        // Bottom row: Save, Load, Reset
+        // Middle row: Save, Load, Import
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
@@ -78,6 +79,16 @@ fun GameControls(
                 Text("불러오기")
             }
 
+            TextButton(onClick = onImportClick) {
+                Text("사진 불러오기")
+            }
+        }
+
+        // Bottom row: Reset
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+        ) {
             TextButton(
                 onClick = onResetClick,
                 colors = ButtonDefaults.textButtonColors(
@@ -137,6 +148,7 @@ fun GameControlsPreview() {
         onRedoClick = {},
         onSaveClick = {},
         onLoadClick = {},
+        onImportClick = {},
         onResetClick = {}
     )
 }

@@ -7,8 +7,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.presentation.game.GameScreen
 import com.example.janggi2.presentation.game.GameViewModel
+import com.example.janggi2.presentation.importboard.ImportScreen
 import com.example.janggi2.presentation.savedgames.SavedGamesScreen
 
 /**
@@ -31,6 +33,7 @@ fun JangGiNavHost(
             val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
             val loadGameId = savedStateHandle?.get<Long>("loadGameId")
             val loadForReplay = savedStateHandle?.get<Boolean>("loadForReplay") ?: false
+            val importedGameState = savedStateHandle?.get<GameState>("importedGameState")
 
             LaunchedEffect(loadGameId) {
                 if (loadGameId != null) {
@@ -45,10 +48,28 @@ fun JangGiNavHost(
                 }
             }
 
+            LaunchedEffect(importedGameState) {
+                if (importedGameState != null) {
+                    viewModel.loadImportedGame(importedGameState)
+                    savedStateHandle?.remove<GameState>("importedGameState")
+                }
+            }
+
+            // Check for imported game state from Import screen
+            LaunchedEffect(backStackEntry) {
+                ImportStateHolder.pendingImportedGameState?.let { gameState ->
+                    viewModel.loadImportedGame(gameState)
+                    ImportStateHolder.pendingImportedGameState = null
+                }
+            }
+
             GameScreen(
                 viewModel = viewModel,
                 onNavigateToSavedGames = {
                     navController.navigate(Screen.SavedGames.route)
+                },
+                onNavigateToImport = {
+                    navController.navigate(Screen.Import.route)
                 }
             )
         }
@@ -73,6 +94,19 @@ fun JangGiNavHost(
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("loadForReplay", true)
+                    navController.popBackStack()
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Import.route) {
+            ImportScreen(
+                onImportComplete = { gameState ->
+                    // Store in temporary holder and navigate back
+                    ImportStateHolder.pendingImportedGameState = gameState
                     navController.popBackStack()
                 },
                 onNavigateBack = {
