@@ -103,9 +103,32 @@ class LineDetector @Inject constructor() {
         val clusteredHorizontal = clusterLines(rawHorizontal, height)
         Log.d(TAG, "Clustered: ${clusteredVertical.size} vertical, ${clusteredHorizontal.size} horizontal")
 
-        // 6. 9개, 10개 선 선택/보간
+        // 6. 세로선 먼저 확정 (9개)
         val finalVertical = selectOrInterpolateLines(clusteredVertical, EXPECTED_VERTICAL_LINES)
-        val finalHorizontal = selectOrInterpolateLines(clusteredHorizontal, EXPECTED_HORIZONTAL_LINES)
+
+        // 7. 세로선 범위를 기준으로 장기판 높이 추정 (비율 9:10)
+        val boardWidth = if (finalVertical.size >= 2) {
+            finalVertical.last() - finalVertical.first()
+        } else {
+            width.toFloat()
+        }
+        val expectedBoardHeight = boardWidth * 10f / 9f  // 장기판 비율 9:10
+
+        // 8. 장기판 범위 내의 가로선만 필터링
+        val filteredHorizontal = filterHorizontalLinesInBoard(
+            clusteredHorizontal,
+            finalVertical,
+            expectedBoardHeight,
+            height
+        )
+        Log.d(TAG, "Filtered horizontal: ${clusteredHorizontal.size} -> ${filteredHorizontal.size}")
+
+        // 9. 가로선 확정 (10개) - 장기판 범위 내에서만
+        val finalHorizontal = selectOrInterpolateLinesInRange(
+            filteredHorizontal,
+            EXPECTED_HORIZONTAL_LINES,
+            expectedBoardHeight
+        )
         Log.d(TAG, "Final: ${finalVertical.size} vertical, ${finalHorizontal.size} horizontal")
 
         // 7. 보드 영역 계산
@@ -326,7 +349,105 @@ class LineDetector @Inject constructor() {
     }
 
     /**
+     * 장기판 범위 내의 가로선만 필터링
+     * 세로선의 범위와 장기판 비율(9:10)을 기준으로 유효한 가로선만 선택
+     */
+    private fun filterHorizontalLinesInBoard(
+        horizontalLines: List<Float>,
+        verticalLines: List<Float>,
+        expectedBoardHeight: Float,
+        imageHeight: Int
+    ): List<Float> {
+        if (horizontalLines.isEmpty() || verticalLines.size < 2) {
+            return horizontalLines
+        }
+
+        // 가로선들의 중심을 찾아 장기판 중심 추정
+        val sortedH = horizontalLines.sorted()
+        val hCenter = (sortedH.first() + sortedH.last()) / 2
+
+        // 장기판 상하 경계 계산
+        val halfHeight = expectedBoardHeight / 2
+        val boardTop = hCenter - halfHeight
+        val boardBottom = hCenter + halfHeight
+
+        Log.d(TAG, "Board Y range: $boardTop ~ $boardBottom (center=$hCenter, height=$expectedBoardHeight)")
+
+        // 마진 10% 추가하여 필터링
+        val margin = expectedBoardHeight * 0.1f
+        val filtered = horizontalLines.filter { y ->
+            y >= (boardTop - margin) && y <= (boardBottom + margin)
+        }
+
+        Log.d(TAG, "Horizontal lines filtered: ${horizontalLines.size} -> ${filtered.size}")
+        return filtered
+    }
+
+    /**
+     * 지정된 범위 내에서 선 선택/보간
+     */
+    private fun selectOrInterpolateLinesInRange(
+        lines: List<Float>,
+        expectedCount: Int,
+        expectedRange: Float
+    ): List<Float> {
+        if (lines.isEmpty()) {
+            Log.w(TAG, "No horizontal lines to process")
+            return emptyList()
+        }
+
+        val sorted = lines.sorted()
+
+        // 검출된 선이 충분하면 균등 간격으로 선택
+        if (sorted.size >= expectedCount) {
+            return selectEvenlySpacedLines(sorted, expectedCount)
+        }
+
+        // 부족하면 검출된 범위 내에서만 보간
+        return fillMissingLinesInRange(sorted, expectedCount)
+    }
+
+    /**
+     * 검출된 선들의 범위 내에서만 빠진 선 채우기
+     * 범위를 벗어나지 않음
+     */
+    private fun fillMissingLinesInRange(detectedLines: List<Float>, expectedCount: Int): List<Float> {
+        if (detectedLines.size < 2) {
+            Log.w(TAG, "Need at least 2 lines to fill missing in range")
+            return detectedLines
+        }
+
+        val sorted = detectedLines.sorted()
+        val minVal = sorted.first()  // 검출된 첫 번째 선 (장기판 상단)
+        val maxVal = sorted.last()   // 검출된 마지막 선 (장기판 하단)
+        val range = maxVal - minVal
+
+        // 검출된 범위 내에서 균등 분할
+        val spacing = range / (expectedCount - 1)
+
+        Log.d(TAG, "Fill in range: $minVal ~ $maxVal (range=$range, spacing=$spacing)")
+
+        val result = mutableListOf<Float>()
+        for (i in 0 until expectedCount) {
+            val idealPos = minVal + spacing * i
+
+            // 검출된 선 중 가까운 것이 있으면 사용
+            val closest = sorted.minByOrNull { abs(it - idealPos) }
+            val tolerance = spacing * 0.3f
+
+            if (closest != null && abs(closest - idealPos) < tolerance && closest !in result) {
+                result.add(closest)
+            } else {
+                result.add(idealPos)
+            }
+        }
+
+        return result.sorted()
+    }
+
+    /**
      * 선 개수에 맞게 선택 또는 보간
+     * 검출된 선을 기반으로 빠진 선을 균등 간격으로 채웁니다.
      */
     private fun selectOrInterpolateLines(lines: List<Float>, expectedCount: Int): List<Float> {
         if (lines.isEmpty()) {
@@ -341,8 +462,8 @@ class LineDetector @Inject constructor() {
             return selectEvenlySpacedLines(sorted, expectedCount)
         }
 
-        // 부족하면 보간
-        return interpolateToCount(sorted, expectedCount)
+        // 부족하면 보간하여 빠진 선 채우기
+        return fillMissingLines(sorted, expectedCount)
     }
 
     /**
@@ -385,39 +506,60 @@ class LineDetector @Inject constructor() {
     }
 
     /**
-     * 검출된 선 사이를 보간하여 채우기
+     * 빠진 선을 균등 간격으로 채우기
+     * 검출된 선들 사이의 평균 간격을 계산하여 빠진 위치에 선을 추가합니다.
      */
-    private fun interpolateToCount(lines: List<Float>, expectedCount: Int): List<Float> {
-        if (lines.size < 2) {
-            Log.w(TAG, "Need at least 2 lines to interpolate")
-            return lines
+    private fun fillMissingLines(detectedLines: List<Float>, expectedCount: Int): List<Float> {
+        if (detectedLines.size < 2) {
+            Log.w(TAG, "Need at least 2 lines to fill missing")
+            return detectedLines
         }
 
-        val minVal = lines.first()
-        val maxVal = lines.last()
-        val idealSpacing = (maxVal - minVal) / (expectedCount - 1)
+        val sorted = detectedLines.sorted()
+        val minVal = sorted.first()
+        val maxVal = sorted.last()
 
+        // 검출된 선들 사이의 간격 분석
+        val gaps = mutableListOf<Float>()
+        for (i in 1 until sorted.size) {
+            gaps.add(sorted[i] - sorted[i - 1])
+        }
+
+        // 가장 작은 간격을 기준 간격으로 사용 (1칸 간격으로 추정)
+        val minGap = gaps.minOrNull() ?: return sorted
+        val unitSpacing = minGap
+
+        Log.d(TAG, "Fill missing: detected=${sorted.size}, expected=$expectedCount, unitSpacing=$unitSpacing")
+
+        // 전체 범위에서 예상되는 선 개수 계산
+        val totalRange = maxVal - minVal
+        val estimatedCount = (totalRange / unitSpacing).toInt() + 1
+
+        // 실제 간격 계산 (expectedCount 기준)
+        val actualSpacing = totalRange / (expectedCount - 1)
+
+        Log.d(TAG, "Range=$totalRange, estimatedCount=$estimatedCount, actualSpacing=$actualSpacing")
+
+        // expectedCount개의 선을 균등 배치
         val result = mutableListOf<Float>()
         for (i in 0 until expectedCount) {
-            val idealPos = minVal + idealSpacing * i
+            val idealPos = minVal + actualSpacing * i
 
-            // 검출된 선 중 가까운 것이 있으면 사용
-            val closest = lines.minByOrNull { abs(it - idealPos) }
+            // 검출된 선 중 가까운 것이 있으면 사용 (오차 허용: 간격의 30%)
+            val closest = sorted.minByOrNull { abs(it - idealPos) }
+            val tolerance = actualSpacing * 0.3f
 
-            if (closest != null && abs(closest - idealPos) < idealSpacing * 0.4f) {
-                // 기존 선과 충분히 가까우면 그 값 사용
-                if (closest !in result) {
-                    result.add(closest)
-                } else {
-                    result.add(idealPos)
-                }
+            if (closest != null && abs(closest - idealPos) < tolerance && closest !in result) {
+                result.add(closest)
+                Log.v(TAG, "Using detected line at $closest for position $i (ideal=$idealPos)")
             } else {
-                // 아니면 보간된 위치 사용
                 result.add(idealPos)
+                Log.v(TAG, "Interpolated line at $idealPos for position $i")
             }
         }
 
-        return result.sorted().take(expectedCount)
+        Log.d(TAG, "Filled: ${detectedLines.size} -> ${result.size} lines")
+        return result.sorted()
     }
 
     /**
