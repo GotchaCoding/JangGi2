@@ -11,12 +11,15 @@ import com.example.janggi2.data.imageprocessing.BoardDetector
 import com.example.janggi2.data.imageprocessing.IntersectionCalculator
 import com.example.janggi2.data.imageprocessing.LineDetector
 import com.example.janggi2.data.imageprocessing.PieceDetector
+import com.example.janggi2.domain.model.Player
+import com.example.janggi2.domain.model.Position
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -38,6 +41,20 @@ class LineDetectionDebugViewModel @Inject constructor(
     }
 
     /**
+     * 교차점 검증 데이터
+     */
+    data class IntersectionVerification(
+        val position: Position,
+        val pixelX: Float,
+        val pixelY: Float,
+        val detectedPiece: PieceDetector.DetectedPiece?,  // AI가 검출한 기물
+        val verifiedPieceType: PieceDetector.PieceType? = null,         // 사용자가 확인한 기물 타입
+        val verifiedPlayer: Player? = null,               // 사용자가 확인한 진영
+        val isVerified: Boolean = false,                  // 검증 완료 여부
+        val isCorrect: Boolean? = null                    // AI 검출이 맞았는지
+    )
+
+    /**
      * UI 상태
      */
     data class DebugUiState(
@@ -48,7 +65,11 @@ class LineDetectionDebugViewModel @Inject constructor(
         val intersectionGrid: IntersectionCalculator.IntersectionGrid? = null,
         val detectedPieces: List<PieceDetector.DetectedPiece> = emptyList(),
         val error: String? = null,
-        val stats: DetectionStats? = null
+        val stats: DetectionStats? = null,
+        // 교차점 검증 관련
+        val intersectionVerifications: Map<Position, IntersectionVerification> = emptyMap(),
+        val selectedPosition: Position? = null,
+        val showVerificationDialog: Boolean = false
     )
 
     /**
@@ -151,7 +172,18 @@ class LineDetectionDebugViewModel @Inject constructor(
             usedLineDetection = true
         )
 
-        // 8. 상태 업데이트
+        // 8. 교차점 검증 데이터 초기화
+        val intersectionVerifications = grid.intersections.associate { intersection ->
+            val detectedPiece = pieces.find { it.position == intersection.position }
+            intersection.position to IntersectionVerification(
+                position = intersection.position,
+                pixelX = intersection.pixelX,
+                pixelY = intersection.pixelY,
+                detectedPiece = detectedPiece
+            )
+        }
+
+        // 9. 상태 업데이트
         _uiState.value = DebugUiState(
             isLoading = false,
             originalBitmap = bitmap,
@@ -159,7 +191,8 @@ class LineDetectionDebugViewModel @Inject constructor(
             detectedLines = detectedLines,
             intersectionGrid = grid,
             detectedPieces = pieces,
-            stats = stats
+            stats = stats,
+            intersectionVerifications = intersectionVerifications
         )
     }
 
@@ -220,4 +253,151 @@ class LineDetectionDebugViewModel @Inject constructor(
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
     }
+
+    /**
+     * 교차점 클릭 처리
+     */
+    fun onIntersectionClick(position: Position) {
+        Log.d(TAG, "Intersection clicked: $position")
+        _uiState.update { state ->
+            state.copy(
+                selectedPosition = position,
+                showVerificationDialog = true
+            )
+        }
+    }
+
+    /**
+     * 검증 다이얼로그 닫기
+     */
+    fun dismissVerificationDialog() {
+        _uiState.update { state ->
+            state.copy(
+                showVerificationDialog = false,
+                selectedPosition = null
+            )
+        }
+    }
+
+    /**
+     * 기물 검증 결과 저장
+     * @param position 교차점 위치
+     * @param pieceType 실제 기물 타입 (null이면 기물 없음)
+     * @param player 실제 진영 (null이면 기물 없음)
+     */
+    fun verifyIntersection(position: Position, pieceType: PieceDetector.PieceType?, player: Player?) {
+        Log.d(TAG, "Verifying intersection $position: pieceType=$pieceType, player=$player")
+
+        val currentState = _uiState.value
+        val grid = currentState.intersectionGrid ?: return
+        val intersection = grid.intersections.find { it.position == position } ?: return
+
+        // AI가 검출한 기물 찾기
+        val detectedPiece = currentState.detectedPieces.find { it.position == position }
+
+        // AI 검출이 맞았는지 확인
+        val isCorrect = when {
+            pieceType == null && detectedPiece == null -> true  // 둘 다 없음
+            pieceType == null && detectedPiece != null -> false // AI만 검출
+            pieceType != null && detectedPiece == null -> false // AI 미검출
+            else -> detectedPiece?.pieceType == pieceType && detectedPiece?.player == player
+        }
+
+        val verification = IntersectionVerification(
+            position = position,
+            pixelX = intersection.pixelX,
+            pixelY = intersection.pixelY,
+            detectedPiece = detectedPiece,
+            verifiedPieceType = pieceType,
+            verifiedPlayer = player,
+            isVerified = true,
+            isCorrect = isCorrect
+        )
+
+        _uiState.update { state ->
+            state.copy(
+                intersectionVerifications = state.intersectionVerifications + (position to verification),
+                showVerificationDialog = false,
+                selectedPosition = null
+            )
+        }
+
+        Log.d(TAG, "Verification saved: position=$position, isCorrect=$isCorrect")
+    }
+
+    /**
+     * 선택된 교차점의 현재 검증 정보 가져오기
+     */
+    fun getSelectedVerification(): IntersectionVerification? {
+        val position = _uiState.value.selectedPosition ?: return null
+        val grid = _uiState.value.intersectionGrid ?: return null
+        val intersection = grid.intersections.find { it.position == position } ?: return null
+
+        return _uiState.value.intersectionVerifications[position]
+            ?: IntersectionVerification(
+                position = position,
+                pixelX = intersection.pixelX,
+                pixelY = intersection.pixelY,
+                detectedPiece = _uiState.value.detectedPieces.find { it.position == position }
+            )
+    }
+
+    /**
+     * 검증 통계 계산
+     */
+    fun getVerificationStats(): VerificationStats {
+        val verifications = _uiState.value.intersectionVerifications.values
+        val verified = verifications.filter { it.isVerified }
+        val correct = verified.filter { it.isCorrect == true }
+        val withPieces = verified.filter { it.verifiedPieceType != null }
+
+        return VerificationStats(
+            totalIntersections = 90,
+            verifiedCount = verified.size,
+            correctCount = correct.size,
+            incorrectCount = verified.size - correct.size,
+            piecesFound = withPieces.size,
+            accuracy = if (verified.isNotEmpty()) correct.size.toFloat() / verified.size else 0f
+        )
+    }
+
+    /**
+     * 검증 데이터 내보내기 (JSON 형태)
+     */
+    fun exportVerificationData(): String {
+        val verifications = _uiState.value.intersectionVerifications.values
+        val sb = StringBuilder()
+        sb.appendLine("{")
+        sb.appendLine("  \"verifications\": [")
+
+        verifications.forEachIndexed { index, v ->
+            sb.appendLine("    {")
+            sb.appendLine("      \"position\": { \"col\": ${v.position.col}, \"row\": ${v.position.row} },")
+            sb.appendLine("      \"pixelX\": ${v.pixelX},")
+            sb.appendLine("      \"pixelY\": ${v.pixelY},")
+            sb.appendLine("      \"detectedPiece\": ${v.detectedPiece?.let { "\"${it.pieceType}\"" } ?: "null"},")
+            sb.appendLine("      \"detectedPlayer\": ${v.detectedPiece?.let { "\"${it.player}\"" } ?: "null"},")
+            sb.appendLine("      \"verifiedPiece\": ${v.verifiedPieceType?.let { "\"$it\"" } ?: "null"},")
+            sb.appendLine("      \"verifiedPlayer\": ${v.verifiedPlayer?.let { "\"$it\"" } ?: "null"},")
+            sb.appendLine("      \"isCorrect\": ${v.isCorrect}")
+            sb.append("    }")
+            if (index < verifications.size - 1) sb.appendLine(",") else sb.appendLine()
+        }
+
+        sb.appendLine("  ]")
+        sb.appendLine("}")
+        return sb.toString()
+    }
+
+    /**
+     * 검증 통계 데이터
+     */
+    data class VerificationStats(
+        val totalIntersections: Int,
+        val verifiedCount: Int,
+        val correctCount: Int,
+        val incorrectCount: Int,
+        val piecesFound: Int,
+        val accuracy: Float
+    )
 }
