@@ -41,7 +41,8 @@ import kotlin.math.roundToInt
 fun GameScreen(
     viewModel: GameViewModel = viewModel(),
     onNavigateToSavedGames: () -> Unit = {},
-    onNavigateToImport: () -> Unit = {}
+    onNavigateToImport: () -> Unit = {},
+    onNavigateToDebug: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -149,6 +150,9 @@ fun GameScreen(
                     },
                     onResetClick = {
                         viewModel.onEvent(GameUiEvent.ResetGame)
+                    },
+                    onDebugClick = {
+                        onNavigateToDebug()
                     }
                 )
             }

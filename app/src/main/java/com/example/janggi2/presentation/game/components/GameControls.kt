@@ -35,6 +35,7 @@ fun GameControls(
     onLoadClick: () -> Unit,
     onImportClick: () -> Unit,
     onResetClick: () -> Unit,
+    onDebugClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -81,6 +82,10 @@ fun GameControls(
 
             TextButton(onClick = onImportClick) {
                 Text("사진 불러오기")
+            }
+
+            TextButton(onClick = onDebugClick) {
+                Text("디버그")
             }
         }
 
@@ -149,6 +154,7 @@ fun GameControlsPreview() {
         onSaveClick = {},
         onLoadClick = {},
         onImportClick = {},
-        onResetClick = {}
+        onResetClick = {},
+        onDebugClick = {}
     )
 }

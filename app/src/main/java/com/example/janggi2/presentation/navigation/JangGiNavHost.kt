@@ -8,6 +8,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.presentation.debug.LineDetectionDebugScreen
 import com.example.janggi2.presentation.game.GameScreen
 import com.example.janggi2.presentation.game.GameViewModel
 import com.example.janggi2.presentation.importboard.ImportScreen
@@ -70,6 +71,9 @@ fun JangGiNavHost(
                 },
                 onNavigateToImport = {
                     navController.navigate(Screen.Import.route)
+                },
+                onNavigateToDebug = {
+                    navController.navigate(Screen.LineDetectionDebug.route)
                 }
             )
         }
@@ -109,6 +113,14 @@ fun JangGiNavHost(
                     ImportStateHolder.pendingImportedGameState = gameState
                     navController.popBackStack()
                 },
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.LineDetectionDebug.route) {
+            LineDetectionDebugScreen(
                 onNavigateBack = {
                     navController.popBackStack()
                 }

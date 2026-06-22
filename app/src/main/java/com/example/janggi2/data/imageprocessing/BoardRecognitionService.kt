@@ -16,26 +16,38 @@ import javax.inject.Singleton
 /**
  * 장기판 인식 서비스
  *
- * MVP: 그리드 분할 + 색상 감지 + 모든 기물을 "차"로 인식
+ * 선 검출 기반 정확한 기물 인식:
+ * 1. Hough Line Transform으로 9개 세로선, 10개 가로선 검출
+ * 2. 90개 교차점 좌표 정밀 계산
+ * 3. 각 교차점에서 원형 ROI 기반 기물 검출
+ *
+ * 선 검출 실패 시 기존 균등 분할 방식으로 폴백
  */
 @Singleton
 class BoardRecognitionService @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val boardDetector: BoardDetector
+    private val boardDetector: BoardDetector,
+    private val lineDetector: LineDetector,
+    private val intersectionCalculator: IntersectionCalculator,
+    private val pieceDetector: PieceDetector
 ) {
     companion object {
         private const val TAG = "BoardRecognition"
+        private const val USE_LINE_DETECTION = true  // 선 검출 사용 여부
     }
 
     /**
-     * MVP: 90셀 균등 분할 + 색상 기반 감지
+     * 이미지에서 장기 기물을 검출합니다.
+     *
+     * 1차: 선 검출 기반 정밀 인식 시도
+     * 2차 (폴백): 균등 분할 + 색상 감지
      *
      * @param imageUri URI of the image to process
      * @return Result containing detected pieces
      */
     suspend fun extractText(imageUri: Uri): Result<ExtractedText> {
         return try {
-            Log.d(TAG, "=== Board Recognition Started (MVP: Grid + Color) ===")
+            Log.d(TAG, "=== Board Recognition Started ===")
 
             // 1. Load image
             val bitmap = loadAndDownsampleImage(imageUri)
@@ -43,75 +55,161 @@ class BoardRecognitionService @Inject constructor(
 
             Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}")
 
-            // 2. Detect board region (center estimation)
-            val boardRegion = boardDetector.estimateBoardRegion(bitmap)
+            // 2. Detect board region
+            val boardRegion = boardDetector.detectBoard(bitmap)
+                ?: boardDetector.estimateBoardRegion(bitmap)
             Log.i(TAG, "Board region: ${boardRegion.width()}x${boardRegion.height()}")
 
-            // 3. Split into 9×10 grid
-            val cells = boardDetector.splitIntoCells(bitmap, boardRegion)
-            Log.d(TAG, "Split into 10 rows × 9 cols = 90 cells")
-
-            // 4. Check each cell for pieces (color-based)
-            val detectedPieces = mutableListOf<DetectedPieceWithPosition>()
-            var checkedCells = 0
-
-            for (row in 0 until 10) {
-                for (col in 0 until 9) {
-                    checkedCells++
-                    val cellBitmap = cells[row][col]
-                    val position = Position(col, row)
-
-                    // Detect piece by color
-                    val dominantColor = detectDominantColor(cellBitmap)
-
-                    if (dominantColor != DominantColor.EMPTY) {
-                        // Determine player from color
-                        val player = when (dominantColor) {
-                            DominantColor.RED -> Player.CHO
-                            DominantColor.BLUE -> Player.HAN
-                            DominantColor.EMPTY -> continue
-                        }
-
-                        // MVP: All detected pieces are "Chariot" (차)
-                        val piece = Piece.Chariot(player, position)
-
-                        detectedPieces.add(
-                            DetectedPieceWithPosition(
-                                position = position,
-                                piece = piece,
-                                confidence = 0.7f  // Medium confidence (MVP)
-                            )
-                        )
-
-                        Log.d(TAG, "[$row,$col] ✅ Detected: 차 $player (color-based)")
-                    } else {
-                        Log.v(TAG, "[$row,$col] Empty")
-                    }
+            // 3. 선 검출 기반 인식 시도
+            if (USE_LINE_DETECTION) {
+                val lineResult = tryLineBasedDetection(bitmap, boardRegion)
+                if (lineResult != null) {
+                    return Result.success(lineResult)
                 }
+                Log.w(TAG, "Line-based detection failed, falling back to grid method")
             }
 
-            Log.d(TAG, "=== Recognition Complete ===")
-            Log.d(TAG, "Pieces detected: ${detectedPieces.size}/$checkedCells cells")
+            // 4. 폴백: 기존 균등 분할 방식
+            val fallbackResult = detectWithGridMethod(bitmap, boardRegion)
 
-            val choCount = detectedPieces.count { it.piece.player == Player.CHO }
-            val hanCount = detectedPieces.count { it.piece.player == Player.HAN }
-            Log.d(TAG, "Distribution: CHO=$choCount, HAN=$hanCount")
-
-            if (detectedPieces.isEmpty()) {
+            if (fallbackResult.detectedPieces.isEmpty()) {
                 return Result.failure(Exception("기물을 감지하지 못했습니다"))
             }
 
-            Result.success(
-                ExtractedText(
-                    detectedPieces = detectedPieces,
-                    imageWidth = bitmap.width,
-                    imageHeight = bitmap.height
-                )
-            )
+            Result.success(fallbackResult)
         } catch (e: Exception) {
             Log.e(TAG, "Board recognition failed", e)
             Result.failure(Exception("기물 인식 실패: ${e.message}", e))
         }
+    }
+
+    /**
+     * 선 검출 기반 정밀 인식
+     */
+    private fun tryLineBasedDetection(
+        bitmap: Bitmap,
+        boardRegion: android.graphics.Rect
+    ): ExtractedText? {
+        try {
+            Log.d(TAG, "=== Line-based Detection ===")
+
+            // 1. 선 검출
+            val detectedLines = lineDetector.detectLines(bitmap, boardRegion)
+            if (detectedLines == null) {
+                Log.w(TAG, "Line detection failed")
+                return null
+            }
+
+            Log.d(TAG, "Detected lines: V=${detectedLines.verticalLines.size}, " +
+                    "H=${detectedLines.horizontalLines.size}, " +
+                    "confidence=${detectedLines.confidence}")
+
+            // 신뢰도가 너무 낮으면 폴백
+            if (detectedLines.confidence < 0.5f) {
+                Log.w(TAG, "Line detection confidence too low: ${detectedLines.confidence}")
+                return null
+            }
+
+            // 2. 교차점 계산
+            val grid = intersectionCalculator.calculateIntersections(detectedLines)
+            Log.d(TAG, "Calculated ${grid.intersections.size} intersections")
+
+            // 3. 각 교차점에서 기물 검출
+            val detectedPieces = pieceDetector.detectAllPieces(bitmap, grid)
+
+            if (detectedPieces.isEmpty()) {
+                Log.w(TAG, "No pieces detected with line-based method")
+                return null
+            }
+
+            // 4. 결과 변환
+            val piecesWithPosition = detectedPieces.map { detected ->
+                DetectedPieceWithPosition(
+                    position = detected.position,
+                    piece = detected.toPiece(),
+                    confidence = detected.confidence
+                )
+            }
+
+            val choCount = piecesWithPosition.count { it.piece.player == Player.CHO }
+            val hanCount = piecesWithPosition.count { it.piece.player == Player.HAN }
+
+            Log.i(TAG, "✅ Line-based detection complete: ${piecesWithPosition.size} pieces " +
+                    "(CHO=$choCount, HAN=$hanCount)")
+
+            return ExtractedText(
+                detectedPieces = piecesWithPosition,
+                imageWidth = bitmap.width,
+                imageHeight = bitmap.height,
+                detectedLines = detectedLines,
+                intersectionGrid = grid
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Line-based detection error", e)
+            return null
+        }
+    }
+
+    /**
+     * 균등 분할 방식 (폴백)
+     */
+    private fun detectWithGridMethod(
+        bitmap: Bitmap,
+        boardRegion: android.graphics.Rect
+    ): ExtractedText {
+        Log.d(TAG, "=== Grid-based Detection (Fallback) ===")
+
+        // Split into 9×10 grid
+        val cells = boardDetector.splitIntoCells(bitmap, boardRegion)
+        Log.d(TAG, "Split into 10 rows × 9 cols = 90 cells")
+
+        val detectedPieces = mutableListOf<DetectedPieceWithPosition>()
+        var checkedCells = 0
+
+        for (row in 0 until 10) {
+            for (col in 0 until 9) {
+                checkedCells++
+                val cellBitmap = cells[row][col]
+                val position = Position(col, row)
+
+                val dominantColor = detectDominantColor(cellBitmap)
+
+                if (dominantColor != DominantColor.EMPTY) {
+                    val player = when (dominantColor) {
+                        DominantColor.RED -> Player.CHO
+                        DominantColor.BLUE -> Player.HAN
+                        DominantColor.EMPTY -> continue
+                    }
+
+                    val piece = Piece.Chariot(player, position)
+
+                    detectedPieces.add(
+                        DetectedPieceWithPosition(
+                            position = position,
+                            piece = piece,
+                            confidence = 0.7f
+                        )
+                    )
+
+                    Log.d(TAG, "[$row,$col] ✅ Detected: 차 $player (color-based)")
+                }
+            }
+        }
+
+        Log.d(TAG, "=== Grid Detection Complete ===")
+        Log.d(TAG, "Pieces detected: ${detectedPieces.size}/$checkedCells cells")
+
+        val choCount = detectedPieces.count { it.piece.player == Player.CHO }
+        val hanCount = detectedPieces.count { it.piece.player == Player.HAN }
+        Log.d(TAG, "Distribution: CHO=$choCount, HAN=$hanCount")
+
+        return ExtractedText(
+            detectedPieces = detectedPieces,
+            imageWidth = bitmap.width,
+            imageHeight = bitmap.height,
+            detectedLines = null,
+            intersectionGrid = null
+        )
     }
 
     /**
@@ -222,8 +320,16 @@ class BoardRecognitionService @Inject constructor(
     data class ExtractedText(
         val detectedPieces: List<DetectedPieceWithPosition>,
         val imageWidth: Int,
-        val imageHeight: Int
-    )
+        val imageHeight: Int,
+        val detectedLines: LineDetector.DetectedLines? = null,
+        val intersectionGrid: IntersectionCalculator.IntersectionGrid? = null
+    ) {
+        /**
+         * 선 검출 기반 인식이 사용되었는지 여부
+         */
+        val usedLineDetection: Boolean
+            get() = detectedLines != null && intersectionGrid != null
+    }
 
     /**
      * 검출된 기물과 위치 정보
