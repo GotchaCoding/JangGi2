@@ -1,13 +1,11 @@
 package com.example.janggi2.data.imageprocessing
 
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.Rect
 import android.util.Log
 import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
-import org.opencv.core.MatOfPoint
 import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.core.Size
@@ -21,8 +19,8 @@ import kotlin.math.min
 /**
  * 장기판 선 검출기
  *
- * 카카오장기 보드의 정확한 경계를 찾고 수학적으로 그리드를 계산합니다.
- * Hough Transform 대신 색상 기반 경계 검출을 사용합니다.
+ * 나무색 보드 위의 검은색 선을 직접 검출하여
+ * 9x10 그리드의 교차점을 계산합니다.
  */
 @Singleton
 class LineDetector @Inject constructor() {
@@ -45,45 +43,40 @@ class LineDetector @Inject constructor() {
 
     /**
      * 비트맵에서 장기판 선을 검출합니다.
-     *
-     * @param bitmap 입력 이미지
-     * @param boardRegion 보드 영역 힌트 (정밀 검출에 사용)
-     * @return 검출된 선 정보, 실패 시 null
      */
     fun detectLines(bitmap: Bitmap, boardRegion: Rect?): DetectedLines? {
         try {
-            Log.d(TAG, "=== Line Detection Started (Color-based) ===")
+            Log.d(TAG, "=== Line Detection Started (Black Line Detection) ===")
+            Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}")
 
-            // 1. 정확한 보드 경계 찾기 (색상 기반)
-            val preciseBoardRegion = findPreciseBoardRegion(bitmap, boardRegion)
+            // 1. OpenCV Mat으로 변환
+            val mat = Mat()
+            Utils.bitmapToMat(bitmap, mat)
 
-            if (preciseBoardRegion == null) {
-                Log.w(TAG, "Failed to find precise board region")
-                return null
+            // 2. 검은색 선 검출 (그레이스케일 + 이진화)
+            val blackLineMask = detectBlackLines(mat)
+
+            // 3. HoughLinesP로 선분 검출
+            val lineSegments = detectLinesWithHoughP(blackLineMask)
+            Log.d(TAG, "HoughLinesP detected ${lineSegments.size} line segments")
+
+            if (lineSegments.isEmpty()) {
+                Log.w(TAG, "No lines detected, trying with lower threshold")
+                // 더 낮은 임계값으로 재시도
+                val lineSegments2 = detectLinesWithHoughPLowThreshold(blackLineMask)
+                Log.d(TAG, "Retry detected ${lineSegments2.size} line segments")
+
+                if (lineSegments2.isEmpty()) {
+                    blackLineMask.release()
+                    mat.release()
+                    return fallbackGridDetection(bitmap)
+                }
+
+                return processLineSegments(lineSegments2, mat.cols(), mat.rows(), bitmap, blackLineMask, mat)
             }
 
-            Log.d(TAG, "Precise board region: ${preciseBoardRegion.width()}x${preciseBoardRegion.height()} " +
-                    "at (${preciseBoardRegion.left},${preciseBoardRegion.top})")
+            return processLineSegments(lineSegments, mat.cols(), mat.rows(), bitmap, blackLineMask, mat)
 
-            // 2. 수학적으로 그리드 계산 (9x10 분할)
-            val verticalLines = calculateVerticalLines(preciseBoardRegion)
-            val horizontalLines = calculateHorizontalLines(preciseBoardRegion)
-
-            Log.d(TAG, "Calculated ${verticalLines.size} vertical, ${horizontalLines.size} horizontal lines")
-
-            // 3. 신뢰도 계산 (보드 영역이 유효한 비율인지)
-            val aspectRatio = preciseBoardRegion.width().toFloat() / preciseBoardRegion.height()
-            val expectedRatio = 9f / 10f  // 장기판 비율
-            val confidence = 1f - abs(aspectRatio - expectedRatio).coerceAtMost(0.5f)
-
-            Log.i(TAG, "✅ Line detection complete: confidence=$confidence, aspectRatio=$aspectRatio")
-
-            return DetectedLines(
-                verticalLines = verticalLines,
-                horizontalLines = horizontalLines,
-                confidence = confidence,
-                boardRegion = preciseBoardRegion
-            )
         } catch (e: Exception) {
             Log.e(TAG, "Line detection failed", e)
             return null
@@ -91,206 +84,382 @@ class LineDetector @Inject constructor() {
     }
 
     /**
-     * 색상 기반으로 정확한 보드 경계를 찾습니다.
-     * 힌트 영역 내에서 보드 색상이 연속된 가장 큰 사각형을 찾습니다.
+     * 검출된 선분을 처리하여 최종 그리드 생성
      */
-    private fun findPreciseBoardRegion(bitmap: Bitmap, hint: Rect?): Rect? {
-        val width = bitmap.width
-        val height = bitmap.height
-
-        // 힌트 영역 사용 (없으면 중앙 추정)
-        val searchRegion = hint ?: Rect(
-            (width * 0.05).toInt(),
-            (height * 0.15).toInt(),
-            (width * 0.95).toInt(),
-            (height * 0.85).toInt()
-        )
-
-        Log.d(TAG, "Search region: ${searchRegion.width()}x${searchRegion.height()} at (${searchRegion.left},${searchRegion.top})")
-
-        // 중앙에서 시작하여 각 방향으로 경계 찾기
-        val centerX = searchRegion.centerX()
-        val centerY = searchRegion.centerY()
-
-        // 중앙 픽셀이 보드 색상인지 확인
-        if (!isKakaoBoardColor(bitmap.getPixel(centerX, centerY))) {
-            Log.w(TAG, "Center pixel is not board color, searching for board area...")
-            // 중앙이 보드가 아니면 보드 영역을 찾아야 함
-            return findBoardByScanning(bitmap, searchRegion)
-        }
-
-        // 중앙에서 각 방향으로 스캔하여 경계 찾기
-        val left = findEdge(bitmap, centerX, centerY, -1, 0, searchRegion.left)
-        val right = findEdge(bitmap, centerX, centerY, 1, 0, searchRegion.right)
-        val top = findEdge(bitmap, centerX, centerY, 0, -1, searchRegion.top)
-        val bottom = findEdge(bitmap, centerX, centerY, 0, 1, searchRegion.bottom)
-
-        Log.d(TAG, "Found edges: left=$left, right=$right, top=$top, bottom=$bottom")
-
-        // 유효성 검사
-        if (right <= left || bottom <= top) {
-            Log.w(TAG, "Invalid board edges detected")
-            return findBoardByScanning(bitmap, searchRegion)
-        }
-
-        val region = Rect(left, top, right, bottom)
-
-        if (region.width() < 100 || region.height() < 100) {
-            Log.w(TAG, "Board region too small: ${region.width()}x${region.height()}")
-            return null
-        }
-
-        Log.d(TAG, "Precise board region: ${region.width()}x${region.height()} at (${region.left},${region.top})")
-
-        return region
-    }
-
-    /**
-     * 중앙에서 한 방향으로 스캔하여 보드 경계를 찾습니다.
-     */
-    private fun findEdge(
+    private fun processLineSegments(
+        lineSegments: List<DoubleArray>,
+        width: Int,
+        height: Int,
         bitmap: Bitmap,
-        startX: Int,
-        startY: Int,
-        dx: Int,
-        dy: Int,
-        limit: Int
-    ): Int {
-        var x = startX
-        var y = startY
-        var lastBoardX = startX
-        var lastBoardY = startY
-        var nonBoardCount = 0
+        blackLineMask: Mat,
+        mat: Mat
+    ): DetectedLines {
+        // 4. 선분에서 세로선/가로선 분류
+        val (rawVertical, rawHorizontal) = classifyLineSegments(lineSegments, width, height)
+        Log.d(TAG, "Classified: ${rawVertical.size} vertical, ${rawHorizontal.size} horizontal")
 
-        while (true) {
-            x += dx
-            y += dy
+        // 5. 클러스터링으로 대표선 추출
+        val clusteredVertical = clusterLines(rawVertical, width)
+        val clusteredHorizontal = clusterLines(rawHorizontal, height)
+        Log.d(TAG, "Clustered: ${clusteredVertical.size} vertical, ${clusteredHorizontal.size} horizontal")
 
-            // 경계 체크
-            if (dx != 0 && (x < 0 || x >= bitmap.width || (dx > 0 && x > limit) || (dx < 0 && x < limit))) break
-            if (dy != 0 && (y < 0 || y >= bitmap.height || (dy > 0 && y > limit) || (dy < 0 && y < limit))) break
+        // 6. 9개, 10개 선 선택/보간
+        val finalVertical = selectOrInterpolateLines(clusteredVertical, EXPECTED_VERTICAL_LINES)
+        val finalHorizontal = selectOrInterpolateLines(clusteredHorizontal, EXPECTED_HORIZONTAL_LINES)
+        Log.d(TAG, "Final: ${finalVertical.size} vertical, ${finalHorizontal.size} horizontal")
 
-            if (isKakaoBoardColor(bitmap.getPixel(x, y))) {
-                lastBoardX = x
-                lastBoardY = y
-                nonBoardCount = 0
-            } else {
-                nonBoardCount++
-                // 연속 5픽셀 이상 보드 색상이 아니면 경계로 판단
-                if (nonBoardCount > 5) {
-                    break
-                }
-            }
+        // 7. 보드 영역 계산
+        val detectedBoardRegion = if (finalVertical.isNotEmpty() && finalHorizontal.isNotEmpty()) {
+            Rect(
+                finalVertical.first().toInt(),
+                finalHorizontal.first().toInt(),
+                finalVertical.last().toInt(),
+                finalHorizontal.last().toInt()
+            )
+        } else {
+            Rect(0, 0, bitmap.width, bitmap.height)
         }
 
-        return if (dx != 0) lastBoardX else lastBoardY
-    }
+        // 8. 신뢰도 계산
+        val confidence = calculateConfidence(clusteredVertical.size, clusteredHorizontal.size)
 
-    /**
-     * 스캔 방식으로 보드 영역 찾기 (폴백)
-     */
-    private fun findBoardByScanning(bitmap: Bitmap, searchRegion: Rect): Rect? {
-        var minX = searchRegion.right
-        var maxX = searchRegion.left
-        var minY = searchRegion.bottom
-        var maxY = searchRegion.top
+        blackLineMask.release()
+        mat.release()
 
-        val step = 4
-        var boardPixelCount = 0
+        Log.i(TAG, "Line detection complete: confidence=$confidence")
+        Log.d(TAG, "Board region: ${detectedBoardRegion.left},${detectedBoardRegion.top} - ${detectedBoardRegion.right},${detectedBoardRegion.bottom}")
 
-        for (y in searchRegion.top until searchRegion.bottom step step) {
-            for (x in searchRegion.left until searchRegion.right step step) {
-                if (isKakaoBoardColor(bitmap.getPixel(x, y))) {
-                    boardPixelCount++
-                    minX = min(minX, x)
-                    maxX = max(maxX, x)
-                    minY = min(minY, y)
-                    maxY = max(maxY, y)
-                }
-            }
-        }
-
-        Log.d(TAG, "Scanning found $boardPixelCount board pixels")
-
-        if (maxX <= minX || maxY <= minY) {
-            Log.w(TAG, "No valid board region found by scanning")
-            return null
-        }
-
-        // 약간의 마진 추가
-        val margin = 3
-        return Rect(
-            (minX + margin).coerceAtLeast(0),
-            (minY + margin).coerceAtLeast(0),
-            (maxX - margin).coerceAtMost(bitmap.width),
-            (maxY - margin).coerceAtMost(bitmap.height)
+        return DetectedLines(
+            verticalLines = finalVertical,
+            horizontalLines = finalHorizontal,
+            confidence = confidence,
+            boardRegion = detectedBoardRegion
         )
     }
 
     /**
-     * 카카오장기 보드 색상인지 확인 (연한 갈색/베이지)
+     * 검은색 선 검출
+     * 나무색 배경에서 어두운(검은색) 선을 추출합니다.
      */
-    private fun isKakaoBoardColor(pixel: Int): Boolean {
-        val r = Color.red(pixel)
-        val g = Color.green(pixel)
-        val b = Color.blue(pixel)
+    private fun detectBlackLines(mat: Mat): Mat {
+        // 1. 그레이스케일 변환
+        val gray = Mat()
+        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGB2GRAY)
 
-        val hsv = FloatArray(3)
-        Color.colorToHSV(pixel, hsv)
+        // 2. 가우시안 블러 (노이즈 제거)
+        val blurred = Mat()
+        Imgproc.GaussianBlur(gray, blurred, Size(3.0, 3.0), 0.0)
 
-        val hue = hsv[0]
-        val saturation = hsv[1]
-        val value = hsv[2]
+        // 3. 검은색 검출을 위한 이진화
+        // 낮은 값(어두운 픽셀) = 흰색으로 변환
+        val binary = Mat()
 
-        // 카카오장기 보드 색상 (연한 갈색/베이지)
-        // Hue: 25-50 (오렌지~노랑 계열)
-        // Saturation: 0.15-0.5 (약간의 채도)
-        // Value: 0.6-0.95 (밝은 편)
-        val isKakaoBoard = hue in 20f..55f &&
-                saturation in 0.10f..0.55f &&
-                value in 0.55f..0.95f
+        // 방법 1: 단순 임계값 (검은색 선은 밝기가 낮음)
+        // 임계값 80 이하 = 검은색으로 판단
+        Imgproc.threshold(blurred, binary, 80.0, 255.0, Imgproc.THRESH_BINARY_INV)
 
-        // 추가: RGB 기반 검증 (갈색/베이지 계열)
-        // R > G > B 패턴이고, 전체적으로 밝은 색
-        val isBeigeTone = r > g && g > b &&
-                r in 160..250 &&
-                g in 140..220 &&
-                b in 100..190 &&
-                (r - b) in 30..100  // R과 B의 차이가 적당함
+        // 4. 모폴로지 연산으로 선 강화
+        // 얇은 선을 약간 두껍게
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(2.0, 2.0))
+        Imgproc.dilate(binary, binary, kernel)
 
-        return isKakaoBoard || isBeigeTone
+        gray.release()
+        blurred.release()
+
+        Log.d(TAG, "Black line mask created: ${binary.cols()}x${binary.rows()}")
+        return binary
     }
 
     /**
-     * 보드 영역을 9등분하여 세로선 X 좌표 계산
+     * HoughLinesP로 선분 검출
      */
-    private fun calculateVerticalLines(boardRegion: Rect): List<Float> {
-        val lines = mutableListOf<Float>()
-        val boardWidth = boardRegion.width().toFloat()
+    private fun detectLinesWithHoughP(binary: Mat): List<DoubleArray> {
+        val lines = Mat()
 
-        // 9개 세로선 (0부터 8까지, 총 9개 열의 경계)
-        for (i in 0 until EXPECTED_VERTICAL_LINES) {
-            val x = boardRegion.left + (boardWidth * i / (EXPECTED_VERTICAL_LINES - 1))
-            lines.add(x)
-        }
+        // Canny 엣지
+        val edges = Mat()
+        Imgproc.Canny(binary, edges, 50.0, 150.0)
 
-        return lines
+        // 선분 길이 기준 (이미지 크기의 20%)
+        val minLineLength = (min(binary.rows(), binary.cols()) * 0.2).toDouble()
+
+        Imgproc.HoughLinesP(
+            edges,
+            lines,
+            1.0,                    // rho
+            Math.PI / 180,          // theta
+            80,                     // threshold
+            minLineLength,          // minLineLength
+            30.0                    // maxLineGap
+        )
+
+        val result = extractLineSegments(lines)
+        Log.d(TAG, "HoughLinesP (threshold=80, minLen=$minLineLength): ${result.size} segments")
+
+        edges.release()
+        lines.release()
+
+        return result
     }
 
     /**
-     * 보드 영역을 10등분하여 가로선 Y 좌표 계산
+     * 낮은 임계값으로 재시도
      */
-    private fun calculateHorizontalLines(boardRegion: Rect): List<Float> {
-        val lines = mutableListOf<Float>()
-        val boardHeight = boardRegion.height().toFloat()
+    private fun detectLinesWithHoughPLowThreshold(binary: Mat): List<DoubleArray> {
+        val lines = Mat()
 
-        // 10개 가로선 (0부터 9까지, 총 10개 행의 경계)
-        for (i in 0 until EXPECTED_HORIZONTAL_LINES) {
-            val y = boardRegion.top + (boardHeight * i / (EXPECTED_HORIZONTAL_LINES - 1))
-            lines.add(y)
+        val edges = Mat()
+        Imgproc.Canny(binary, edges, 30.0, 100.0)
+
+        val minLineLength = (min(binary.rows(), binary.cols()) * 0.15).toDouble()
+
+        Imgproc.HoughLinesP(
+            edges,
+            lines,
+            1.0,
+            Math.PI / 180,
+            40,                     // 낮은 threshold
+            minLineLength,
+            50.0                    // 더 큰 maxLineGap
+        )
+
+        val result = extractLineSegments(lines)
+        Log.d(TAG, "HoughLinesP LOW (threshold=40, minLen=$minLineLength): ${result.size} segments")
+
+        edges.release()
+        lines.release()
+
+        return result
+    }
+
+    /**
+     * Mat에서 선분 데이터 추출
+     */
+    private fun extractLineSegments(lines: Mat): List<DoubleArray> {
+        val result = mutableListOf<DoubleArray>()
+        for (i in 0 until lines.rows()) {
+            val data = lines.get(i, 0)
+            if (data != null && data.size >= 4) {
+                result.add(data)
+            }
+        }
+        return result
+    }
+
+    /**
+     * 선분을 세로선/가로선으로 분류
+     */
+    private fun classifyLineSegments(
+        lineSegments: List<DoubleArray>,
+        width: Int,
+        height: Int
+    ): Pair<MutableList<Float>, MutableList<Float>> {
+        val verticalXs = mutableListOf<Float>()
+        val horizontalYs = mutableListOf<Float>()
+
+        for (segment in lineSegments) {
+            val x1 = segment[0]
+            val y1 = segment[1]
+            val x2 = segment[2]
+            val y2 = segment[3]
+
+            val dx = abs(x2 - x1)
+            val dy = abs(y2 - y1)
+            val length = Math.sqrt(dx * dx + dy * dy)
+
+            // 최소 길이 필터 (이미지 크기의 10%)
+            val minLength = min(width, height) * 0.1
+            if (length < minLength) continue
+
+            // 세로선: 거의 수직 (각도 75~105도)
+            if (dy > dx * 2) {
+                val avgX = ((x1 + x2) / 2).toFloat()
+                if (avgX in 0f..width.toFloat()) {
+                    verticalXs.add(avgX)
+                    Log.v(TAG, "Vertical line at x=$avgX (dy=$dy, dx=$dx)")
+                }
+            }
+            // 가로선: 거의 수평 (각도 -15~15도)
+            else if (dx > dy * 2) {
+                val avgY = ((y1 + y2) / 2).toFloat()
+                if (avgY in 0f..height.toFloat()) {
+                    horizontalYs.add(avgY)
+                    Log.v(TAG, "Horizontal line at y=$avgY (dx=$dx, dy=$dy)")
+                }
+            }
         }
 
-        return lines
+        return Pair(verticalXs, horizontalYs)
+    }
+
+    /**
+     * 가까운 선들을 클러스터링하여 대표선 추출
+     */
+    private fun clusterLines(lines: List<Float>, maxValue: Int): List<Float> {
+        if (lines.isEmpty()) return emptyList()
+
+        val sorted = lines.sorted()
+
+        // 클러스터 간격 임계값 (이미지 크기의 3%)
+        val threshold = maxValue * 0.03f
+
+        val clusters = mutableListOf<MutableList<Float>>()
+        var currentCluster = mutableListOf(sorted[0])
+
+        for (i in 1 until sorted.size) {
+            if (sorted[i] - currentCluster.last() < threshold) {
+                currentCluster.add(sorted[i])
+            } else {
+                clusters.add(currentCluster)
+                currentCluster = mutableListOf(sorted[i])
+            }
+        }
+        clusters.add(currentCluster)
+
+        // 각 클러스터의 평균값
+        val clusterCenters = clusters.map { cluster ->
+            cluster.average().toFloat()
+        }
+
+        Log.d(TAG, "Clustered ${lines.size} lines -> ${clusterCenters.size} clusters")
+        return clusterCenters
+    }
+
+    /**
+     * 선 개수에 맞게 선택 또는 보간
+     */
+    private fun selectOrInterpolateLines(lines: List<Float>, expectedCount: Int): List<Float> {
+        if (lines.isEmpty()) {
+            Log.w(TAG, "No lines to process, cannot interpolate")
+            return emptyList()
+        }
+
+        val sorted = lines.sorted()
+
+        // 검출된 선이 충분하면 균등 간격으로 선택
+        if (sorted.size >= expectedCount) {
+            return selectEvenlySpacedLines(sorted, expectedCount)
+        }
+
+        // 부족하면 보간
+        return interpolateToCount(sorted, expectedCount)
+    }
+
+    /**
+     * 균등 간격으로 선 선택
+     */
+    private fun selectEvenlySpacedLines(lines: List<Float>, count: Int): List<Float> {
+        if (lines.size <= count) return lines
+
+        val minVal = lines.first()
+        val maxVal = lines.last()
+        val idealSpacing = (maxVal - minVal) / (count - 1)
+
+        val result = mutableListOf<Float>()
+        val used = BooleanArray(lines.size)
+
+        for (i in 0 until count) {
+            val idealPos = minVal + idealSpacing * i
+
+            // 가장 가까운 미사용 선 찾기
+            var bestIdx = -1
+            var bestDist = Float.MAX_VALUE
+
+            for (j in lines.indices) {
+                if (!used[j]) {
+                    val dist = abs(lines[j] - idealPos)
+                    if (dist < bestDist) {
+                        bestDist = dist
+                        bestIdx = j
+                    }
+                }
+            }
+
+            if (bestIdx >= 0) {
+                result.add(lines[bestIdx])
+                used[bestIdx] = true
+            }
+        }
+
+        return result.sorted()
+    }
+
+    /**
+     * 검출된 선 사이를 보간하여 채우기
+     */
+    private fun interpolateToCount(lines: List<Float>, expectedCount: Int): List<Float> {
+        if (lines.size < 2) {
+            Log.w(TAG, "Need at least 2 lines to interpolate")
+            return lines
+        }
+
+        val minVal = lines.first()
+        val maxVal = lines.last()
+        val idealSpacing = (maxVal - minVal) / (expectedCount - 1)
+
+        val result = mutableListOf<Float>()
+        for (i in 0 until expectedCount) {
+            val idealPos = minVal + idealSpacing * i
+
+            // 검출된 선 중 가까운 것이 있으면 사용
+            val closest = lines.minByOrNull { abs(it - idealPos) }
+
+            if (closest != null && abs(closest - idealPos) < idealSpacing * 0.4f) {
+                // 기존 선과 충분히 가까우면 그 값 사용
+                if (closest !in result) {
+                    result.add(closest)
+                } else {
+                    result.add(idealPos)
+                }
+            } else {
+                // 아니면 보간된 위치 사용
+                result.add(idealPos)
+            }
+        }
+
+        return result.sorted().take(expectedCount)
+    }
+
+    /**
+     * 폴백: 전체 이미지 균등 분할
+     */
+    private fun fallbackGridDetection(bitmap: Bitmap): DetectedLines {
+        Log.w(TAG, "Using fallback grid detection (no lines detected)")
+
+        // 이미지의 중앙 80% 영역 사용
+        val marginX = (bitmap.width * 0.1f).toInt()
+        val marginY = (bitmap.height * 0.1f).toInt()
+
+        val boardRegion = Rect(
+            marginX,
+            marginY,
+            bitmap.width - marginX,
+            bitmap.height - marginY
+        )
+
+        val verticalLines = (0 until EXPECTED_VERTICAL_LINES).map { i ->
+            boardRegion.left + boardRegion.width().toFloat() * i / (EXPECTED_VERTICAL_LINES - 1)
+        }
+
+        val horizontalLines = (0 until EXPECTED_HORIZONTAL_LINES).map { i ->
+            boardRegion.top + boardRegion.height().toFloat() * i / (EXPECTED_HORIZONTAL_LINES - 1)
+        }
+
+        return DetectedLines(
+            verticalLines = verticalLines,
+            horizontalLines = horizontalLines,
+            confidence = 0.3f,
+            boardRegion = boardRegion
+        )
+    }
+
+    /**
+     * 신뢰도 계산
+     */
+    private fun calculateConfidence(detectedVertical: Int, detectedHorizontal: Int): Float {
+        val verticalScore = min(detectedVertical.toFloat() / EXPECTED_VERTICAL_LINES, 1f)
+        val horizontalScore = min(detectedHorizontal.toFloat() / EXPECTED_HORIZONTAL_LINES, 1f)
+        return ((verticalScore + horizontalScore) / 2).coerceIn(0f, 1f)
     }
 
     /**
@@ -303,13 +472,14 @@ class LineDetector @Inject constructor() {
         val mat = Mat()
         Utils.bitmapToMat(bitmap, mat)
 
-        // 보드 영역 표시 (노란색 사각형)
         val boardRect = detectedLines.boardRegion
+
+        // 보드 영역 표시 (노란색 사각형)
         Imgproc.rectangle(
             mat,
             Point(boardRect.left.toDouble(), boardRect.top.toDouble()),
             Point(boardRect.right.toDouble(), boardRect.bottom.toDouble()),
-            Scalar(255.0, 255.0, 0.0),  // Yellow
+            Scalar(255.0, 255.0, 0.0),
             3
         )
 
@@ -317,9 +487,9 @@ class LineDetector @Inject constructor() {
         for (x in detectedLines.verticalLines) {
             Imgproc.line(
                 mat,
-                Point(x.toDouble(), boardRect.top.toDouble()),
-                Point(x.toDouble(), boardRect.bottom.toDouble()),
-                Scalar(0.0, 255.0, 0.0),  // Green
+                Point(x.toDouble(), 0.0),
+                Point(x.toDouble(), mat.rows().toDouble()),
+                Scalar(0.0, 255.0, 0.0),
                 2
             )
         }
@@ -328,21 +498,21 @@ class LineDetector @Inject constructor() {
         for (y in detectedLines.horizontalLines) {
             Imgproc.line(
                 mat,
-                Point(boardRect.left.toDouble(), y.toDouble()),
-                Point(boardRect.right.toDouble(), y.toDouble()),
-                Scalar(0.0, 255.0, 0.0),  // Green
+                Point(0.0, y.toDouble()),
+                Point(mat.cols().toDouble(), y.toDouble()),
+                Scalar(0.0, 255.0, 0.0),
                 2
             )
         }
 
-        // 교차점 그리기 (파란색)
+        // 교차점 그리기 (빨간색 원)
         for (x in detectedLines.verticalLines) {
             for (y in detectedLines.horizontalLines) {
                 Imgproc.circle(
                     mat,
                     Point(x.toDouble(), y.toDouble()),
-                    5,
-                    Scalar(0.0, 0.0, 255.0),  // Blue
+                    6,
+                    Scalar(255.0, 0.0, 0.0),
                     -1
                 )
             }
@@ -351,6 +521,29 @@ class LineDetector @Inject constructor() {
         val result = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
         Utils.matToBitmap(mat, result)
         mat.release()
+
+        return result
+    }
+
+    /**
+     * 디버그용: 검은색 선 마스크 시각화
+     */
+    fun createBlackLineMaskDebug(bitmap: Bitmap): Bitmap {
+        val mat = Mat()
+        Utils.bitmapToMat(bitmap, mat)
+
+        val mask = detectBlackLines(mat)
+
+        // 마스크를 컬러로 변환
+        val colorMask = Mat()
+        Imgproc.cvtColor(mask, colorMask, Imgproc.COLOR_GRAY2RGBA)
+
+        val result = Bitmap.createBitmap(colorMask.cols(), colorMask.rows(), Bitmap.Config.ARGB_8888)
+        Utils.matToBitmap(colorMask, result)
+
+        mat.release()
+        mask.release()
+        colorMask.release()
 
         return result
     }
