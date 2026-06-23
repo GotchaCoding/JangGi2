@@ -45,14 +45,23 @@ class LineDetectionDebugViewModel @Inject constructor(
      */
     data class IntersectionVerification(
         val position: Position,
+        val intersectionId: Int,                          // 고유 번호 (0-89)
         val pixelX: Float,
         val pixelY: Float,
         val detectedPiece: PieceDetector.DetectedPiece?,  // AI가 검출한 기물
+        val analysisDetails: PieceDetector.PieceAnalysisDetails? = null, // 분석 상세 정보
         val verifiedPieceType: PieceDetector.PieceType? = null,         // 사용자가 확인한 기물 타입
         val verifiedPlayer: Player? = null,               // 사용자가 확인한 진영
         val isVerified: Boolean = false,                  // 검증 완료 여부
         val isCorrect: Boolean? = null                    // AI 검출이 맞았는지
-    )
+    ) {
+        companion object {
+            /**
+             * row, col로부터 교차점 ID 계산 (0-89)
+             */
+            fun calculateIntersectionId(row: Int, col: Int): Int = row * 9 + col
+        }
+    }
 
     /**
      * UI 상태
@@ -172,14 +181,25 @@ class LineDetectionDebugViewModel @Inject constructor(
             usedLineDetection = true
         )
 
-        // 8. 교차점 검증 데이터 초기화
+        // 8. 교차점 검증 데이터 초기화 (분석 상세 정보 포함)
         val intersectionVerifications = grid.intersections.associate { intersection ->
             val detectedPiece = pieces.find { it.position == intersection.position }
+            val intersectionId = IntersectionVerification.calculateIntersectionId(
+                intersection.position.row,
+                intersection.position.col
+            )
+            val analysisDetails = pieceDetector.analyzeIntersectionDetails(
+                bitmap,
+                intersection,
+                intersectionId
+            )
             intersection.position to IntersectionVerification(
                 position = intersection.position,
+                intersectionId = intersectionId,
                 pixelX = intersection.pixelX,
                 pixelY = intersection.pixelY,
-                detectedPiece = detectedPiece
+                detectedPiece = detectedPiece,
+                analysisDetails = analysisDetails
             )
         }
 
@@ -303,11 +323,19 @@ class LineDetectionDebugViewModel @Inject constructor(
             else -> detectedPiece?.pieceType == pieceType && detectedPiece?.player == player
         }
 
+        // 기존 검증 데이터에서 intersectionId와 analysisDetails 가져오기
+        val existingVerification = currentState.intersectionVerifications[position]
+        val intersectionId = existingVerification?.intersectionId
+            ?: IntersectionVerification.calculateIntersectionId(position.row, position.col)
+        val analysisDetails = existingVerification?.analysisDetails
+
         val verification = IntersectionVerification(
             position = position,
+            intersectionId = intersectionId,
             pixelX = intersection.pixelX,
             pixelY = intersection.pixelY,
             detectedPiece = detectedPiece,
+            analysisDetails = analysisDetails,
             verifiedPieceType = pieceType,
             verifiedPlayer = player,
             isVerified = true,
@@ -336,6 +364,7 @@ class LineDetectionDebugViewModel @Inject constructor(
         return _uiState.value.intersectionVerifications[position]
             ?: IntersectionVerification(
                 position = position,
+                intersectionId = IntersectionVerification.calculateIntersectionId(position.row, position.col),
                 pixelX = intersection.pixelX,
                 pixelY = intersection.pixelY,
                 detectedPiece = _uiState.value.detectedPieces.find { it.position == position }

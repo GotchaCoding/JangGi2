@@ -66,8 +66,73 @@ class PieceDetector @Inject constructor() {
         GENERAL, GUARD, HORSE, ELEPHANT, CHARIOT, CANNON, SOLDIER, UNKNOWN
     }
 
-    private enum class DominantColor {
+    enum class DominantColor {
         RED, BLUE, GREEN, EMPTY
+    }
+
+    /**
+     * 교차점 분석 상세 정보
+     */
+    data class PieceAnalysisDetails(
+        val intersectionId: Int,              // 0-89 고유 번호
+        val hasPieceBackground: Boolean,      // 흰색 배경 유무
+        val backgroundRatio: Float,           // 흰색 픽셀 비율 (0-1)
+        val dominantColor: DominantColor,     // 지배적 색상
+        val colorConfidence: Float,           // 색상 판단 신뢰도
+        val redPixelRatio: Float,             // 빨강 픽셀 비율
+        val bluePixelRatio: Float,            // 파랑 픽셀 비율
+        val greenPixelRatio: Float,           // 녹색 픽셀 비율
+        val totalColoredPixels: Int,          // 분석된 총 색상 픽셀 수
+        val analysisReason: String            // 분석 이유 문자열
+    ) {
+        companion object {
+            fun create(
+                intersectionId: Int,
+                hasPieceBackground: Boolean,
+                backgroundRatio: Float,
+                dominantColor: DominantColor,
+                colorConfidence: Float,
+                redCount: Int,
+                blueCount: Int,
+                greenCount: Int,
+                totalColored: Int
+            ): PieceAnalysisDetails {
+                val redRatio = if (totalColored > 0) redCount.toFloat() / totalColored else 0f
+                val blueRatio = if (totalColored > 0) blueCount.toFloat() / totalColored else 0f
+                val greenRatio = if (totalColored > 0) greenCount.toFloat() / totalColored else 0f
+
+                val reason = buildString {
+                    append("[#$intersectionId] ")
+                    if (!hasPieceBackground) {
+                        append("기물 없음: 흰색 배경 ${(backgroundRatio * 100).toInt()}% (30% 미만)")
+                    } else {
+                        append("기물 감지: 배경 ${(backgroundRatio * 100).toInt()}%")
+                        if (totalColored >= 5) {
+                            append("\n색상: ${dominantColor.name} (${(colorConfidence * 100).toInt()}%)")
+                            append("\n- 빨강: ${(redRatio * 100).toInt()}%")
+                            append("\n- 파랑: ${(blueRatio * 100).toInt()}%")
+                            append("\n- 녹색: ${(greenRatio * 100).toInt()}%")
+                            append("\n- 총 픽셀: $totalColored")
+                        } else {
+                            append("\n색상 픽셀 부족: $totalColored (최소 5 필요)")
+                        }
+                    }
+                }
+
+                return PieceAnalysisDetails(
+                    intersectionId = intersectionId,
+                    hasPieceBackground = hasPieceBackground,
+                    backgroundRatio = backgroundRatio,
+                    dominantColor = dominantColor,
+                    colorConfidence = colorConfidence,
+                    redPixelRatio = redRatio,
+                    bluePixelRatio = blueRatio,
+                    greenPixelRatio = greenRatio,
+                    totalColoredPixels = totalColored,
+                    analysisReason = reason
+                )
+            }
+        }
     }
 
     /**
@@ -117,20 +182,20 @@ class PieceDetector @Inject constructor() {
             }
 
             // 1. 기물 존재 확인 (흰색/크림색 배경 검출)
-            val hasPiece = detectPiecePresence(bitmap, centerX, centerY, radius)
-            if (!hasPiece) {
+            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius)
+            if (!presenceResult.hasPiece) {
                 return null
             }
 
             // 2. 기물 색상 분석 (테두리 색상으로 진영 판별)
             val colorAnalysis = analyzeKakaoPieceColor(bitmap, centerX, centerY, radius)
 
-            if (colorAnalysis.first == DominantColor.EMPTY) {
+            if (colorAnalysis.dominantColor == DominantColor.EMPTY) {
                 return null
             }
 
             // 3. 진영 결정
-            val player = when (colorAnalysis.first) {
+            val player = when (colorAnalysis.dominantColor) {
                 DominantColor.RED -> Player.CHO
                 DominantColor.BLUE, DominantColor.GREEN -> Player.HAN
                 DominantColor.EMPTY -> return null
@@ -140,7 +205,7 @@ class PieceDetector @Inject constructor() {
                 position = intersection.position,
                 player = player,
                 pieceType = PieceType.UNKNOWN,
-                confidence = colorAnalysis.second,
+                confidence = colorAnalysis.confidence,
                 pixelX = intersection.pixelX,
                 pixelY = intersection.pixelY
             )
@@ -151,6 +216,94 @@ class PieceDetector @Inject constructor() {
     }
 
     /**
+     * 교차점의 상세 분석 결과 반환
+     * @param bitmap 분석할 비트맵 이미지
+     * @param intersection 분석할 교차점 정보
+     * @param intersectionId 교차점 고유 번호 (0-89)
+     * @return 분석 상세 정보
+     */
+    fun analyzeIntersectionDetails(
+        bitmap: Bitmap,
+        intersection: IntersectionCalculator.BoardIntersection,
+        intersectionId: Int
+    ): PieceAnalysisDetails {
+        try {
+            val centerX = intersection.pixelX.toInt()
+            val centerY = intersection.pixelY.toInt()
+            val radius = intersection.cellRadius.toInt()
+
+            // 경계 체크
+            if (centerX - radius < 0 || centerX + radius >= bitmap.width ||
+                centerY - radius < 0 || centerY + radius >= bitmap.height) {
+                return PieceAnalysisDetails.create(
+                    intersectionId = intersectionId,
+                    hasPieceBackground = false,
+                    backgroundRatio = 0f,
+                    dominantColor = DominantColor.EMPTY,
+                    colorConfidence = 0f,
+                    redCount = 0,
+                    blueCount = 0,
+                    greenCount = 0,
+                    totalColored = 0
+                )
+            }
+
+            // 1. 기물 존재 확인 (흰색/크림색 배경 검출)
+            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius)
+
+            if (!presenceResult.hasPiece) {
+                return PieceAnalysisDetails.create(
+                    intersectionId = intersectionId,
+                    hasPieceBackground = false,
+                    backgroundRatio = presenceResult.backgroundRatio,
+                    dominantColor = DominantColor.EMPTY,
+                    colorConfidence = 0f,
+                    redCount = 0,
+                    blueCount = 0,
+                    greenCount = 0,
+                    totalColored = 0
+                )
+            }
+
+            // 2. 기물 색상 분석 (테두리 색상으로 진영 판별)
+            val colorAnalysis = analyzeKakaoPieceColor(bitmap, centerX, centerY, radius)
+
+            return PieceAnalysisDetails.create(
+                intersectionId = intersectionId,
+                hasPieceBackground = true,
+                backgroundRatio = presenceResult.backgroundRatio,
+                dominantColor = colorAnalysis.dominantColor,
+                colorConfidence = colorAnalysis.confidence,
+                redCount = colorAnalysis.redCount,
+                blueCount = colorAnalysis.blueCount,
+                greenCount = colorAnalysis.greenCount,
+                totalColored = colorAnalysis.totalColored
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to analyze intersection details at ${intersection.position}", e)
+            return PieceAnalysisDetails.create(
+                intersectionId = intersectionId,
+                hasPieceBackground = false,
+                backgroundRatio = 0f,
+                dominantColor = DominantColor.EMPTY,
+                colorConfidence = 0f,
+                redCount = 0,
+                blueCount = 0,
+                greenCount = 0,
+                totalColored = 0
+            )
+        }
+    }
+
+    /**
+     * 기물 존재 여부 확인 결과
+     */
+    data class PiecePresenceResult(
+        val hasPiece: Boolean,
+        val backgroundRatio: Float
+    )
+
+    /**
      * 기물 존재 여부 확인 (흰색/크림색 배경 검출)
      */
     private fun detectPiecePresence(
@@ -158,7 +311,7 @@ class PieceDetector @Inject constructor() {
         centerX: Int,
         centerY: Int,
         radius: Int
-    ): Boolean {
+    ): PiecePresenceResult {
         val innerRadius = (radius * 0.5f).toInt()
         var whitishCount = 0
         var totalCount = 0
@@ -187,8 +340,23 @@ class PieceDetector @Inject constructor() {
         }
 
         val ratio = if (totalCount > 0) whitishCount.toFloat() / totalCount else 0f
-        return ratio > 0.3f  // 30% 이상이 흰색이면 기물 있음
+        return PiecePresenceResult(
+            hasPiece = ratio > 0.3f,  // 30% 이상이 흰색이면 기물 있음
+            backgroundRatio = ratio
+        )
     }
+
+    /**
+     * 색상 분석 결과
+     */
+    data class ColorAnalysisResult(
+        val dominantColor: DominantColor,
+        val confidence: Float,
+        val redCount: Int,
+        val blueCount: Int,
+        val greenCount: Int,
+        val totalColored: Int
+    )
 
     /**
      * 카카오장기 기물의 색상 분석
@@ -199,7 +367,7 @@ class PieceDetector @Inject constructor() {
         centerX: Int,
         centerY: Int,
         radius: Int
-    ): Pair<DominantColor, Float> {
+    ): ColorAnalysisResult {
         // 테두리 영역 분석 (기물 가장자리)
         val outerRadius = (radius * 0.9f).toInt()
         val innerRadius = (radius * 0.5f).toInt()
@@ -276,7 +444,14 @@ class PieceDetector @Inject constructor() {
         }
 
         if (totalColored < 5) {
-            return Pair(DominantColor.EMPTY, 0f)
+            return ColorAnalysisResult(
+                dominantColor = DominantColor.EMPTY,
+                confidence = 0f,
+                redCount = redCount,
+                blueCount = blueCount,
+                greenCount = greenCount,
+                totalColored = totalColored
+            )
         }
 
         val redRatio = redCount.toFloat() / totalColored
@@ -287,7 +462,14 @@ class PieceDetector @Inject constructor() {
         val maxRatio = maxOf(redRatio, blueRatio, greenRatio)
 
         if (maxRatio < MIN_PIECE_RATIO) {
-            return Pair(DominantColor.EMPTY, 0f)
+            return ColorAnalysisResult(
+                dominantColor = DominantColor.EMPTY,
+                confidence = 0f,
+                redCount = redCount,
+                blueCount = blueCount,
+                greenCount = greenCount,
+                totalColored = totalColored
+            )
         }
 
         val color = when {
@@ -302,7 +484,14 @@ class PieceDetector @Inject constructor() {
         Log.v(TAG, "Color analysis: red=$redCount, blue=$blueCount, green=$greenCount, " +
                 "total=$totalColored -> $color (${String.format("%.1f", confidence * 100)}%)")
 
-        return Pair(color, confidence)
+        return ColorAnalysisResult(
+            dominantColor = color,
+            confidence = confidence,
+            redCount = redCount,
+            blueCount = blueCount,
+            greenCount = greenCount,
+            totalColored = totalColored
+        )
     }
 
     /**

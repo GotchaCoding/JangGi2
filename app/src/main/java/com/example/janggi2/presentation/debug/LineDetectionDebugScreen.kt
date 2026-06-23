@@ -594,6 +594,10 @@ private fun IntersectionOverlay(
                 else -> Color.White.copy(alpha = 0.3f)
             }
 
+            // 교차점 ID 계산 (row * 9 + col)
+            val intersectionId = verification?.intersectionId
+                ?: (intersection.position.row * 9 + intersection.position.col)
+
             with(density) {
                 Box(
                     modifier = Modifier
@@ -607,10 +611,10 @@ private fun IntersectionOverlay(
                         .clickable { onIntersectionClick(intersection.position) },
                     contentAlignment = Alignment.Center
                 ) {
-                    // 좌표 표시 (col, row)
+                    // 고유 번호 표시 (0-89)
                     Text(
-                        text = "${intersection.position.col}",
-                        fontSize = 8.sp,
+                        text = "$intersectionId",
+                        fontSize = 7.sp,
                         color = Color.Black,
                         fontWeight = FontWeight.Bold
                     )
@@ -633,10 +637,13 @@ private fun PieceVerificationDialog(
     var selectedPieceType by remember { mutableStateOf<PieceDetector.PieceType?>(verification.verifiedPieceType ?: verification.detectedPiece?.pieceType) }
     var selectedPlayer by remember { mutableStateOf<Player?>(verification.verifiedPlayer ?: verification.detectedPiece?.player) }
 
+    // 교차점 ID 계산
+    val intersectionId = verification.intersectionId
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("교차점 (${position.col}, ${position.row}) 검증")
+            Text("교차점 #$intersectionId (${position.col}, ${position.row}) 검증")
         },
         text = {
             Column {
@@ -671,6 +678,30 @@ private fun PieceVerificationDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 분석 상세 정보 카드
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "분석 상세",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = verification.analysisDetails?.analysisReason ?: "분석 정보 없음",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     }
                 }
 
