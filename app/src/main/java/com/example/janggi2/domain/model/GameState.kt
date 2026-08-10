@@ -24,7 +24,10 @@ data class GameState(
     val undoStack: List<GameState> = emptyList(),
     val redoStack: List<GameState> = emptyList(),
     val isReplayMode: Boolean = false,
-    val replayPosition: Int = 0  // 0 = initial state, N = after N moves
+    val replayPosition: Int = 0,  // 0 = initial state, N = after N moves
+    val gameMode: GameMode = GameMode.PLAYER_VS_PLAYER,
+    val aiDifficulty: Int = 10,  // 1-20, default to medium difficulty
+    val aiPlayer: Player = Player.HAN  // Which player is AI (default: HAN)
 ) {
     /**
      * Returns the piece at the given position, or null if empty.
@@ -169,6 +172,11 @@ data class GameState(
     fun canRedo(): Boolean = redoStack.isNotEmpty()
 
     /**
+     * Returns true if it's currently the AI's turn to move.
+     */
+    fun isAiTurn(): Boolean = gameMode.isAiGame() && currentPlayer == aiPlayer
+
+    /**
      * Enters replay mode at position 0 (initial state).
      */
     fun enterReplayMode(): GameState {
@@ -274,8 +282,16 @@ data class GameState(
 /**
  * Creates the initial game state with all pieces in starting positions.
  * Traditional Janggi starting position with 28 pieces (14 per player).
+ *
+ * @param gameMode Game mode (PvP or PvAI), defaults to PvP
+ * @param aiDifficulty AI difficulty level (1-20), defaults to 10 (medium)
+ * @param aiPlayer Which player the AI controls (CHO or HAN), defaults to HAN
  */
-fun initialGameState(): GameState {
+fun initialGameState(
+    gameMode: GameMode = GameMode.PLAYER_VS_PLAYER,
+    aiDifficulty: Int = 10,
+    aiPlayer: Player = Player.HAN
+): GameState {
     val pieces = mutableMapOf<Position, Piece>()
 
     // CHO (top player) pieces
@@ -330,5 +346,11 @@ fun initialGameState(): GameState {
     pieces[Position(7, 9)] = Piece.Horse(Player.HAN, Position(7, 9))
     pieces[Position(8, 9)] = Piece.Chariot(Player.HAN, Position(8, 9))
 
-    return GameState(board = pieces, currentPlayer = Player.CHO)
+    return GameState(
+        board = pieces,
+        currentPlayer = Player.CHO,
+        gameMode = gameMode,
+        aiDifficulty = aiDifficulty,
+        aiPlayer = aiPlayer
+    )
 }

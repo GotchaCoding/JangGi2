@@ -170,7 +170,8 @@ fun LineDetectionDebugScreen(
                         uiState = uiState,
                         onIntersectionClick = { position ->
                             viewModel.onIntersectionClick(position)
-                        }
+                        },
+                        onExtractTemplates = { viewModel.extractTemplatesFromCurrentImage() }
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -240,7 +241,8 @@ private fun EmptyContent(onSelectImage: () -> Unit) {
 @Composable
 private fun DebugImageContent(
     uiState: LineDetectionDebugViewModel.DebugUiState,
-    onIntersectionClick: (Position) -> Unit
+    onIntersectionClick: (Position) -> Unit,
+    onExtractTemplates: () -> Unit
 ) {
     // 줌 및 팬 상태
     var scale by remember { mutableFloatStateOf(1f) }
@@ -371,6 +373,17 @@ private fun DebugImageContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // 템플릿 추출 카드
+        TemplateExtractionCard(
+            isTemplateExtracted = uiState.isTemplateExtracted,
+            isExtractingTemplate = uiState.isExtractingTemplate,
+            templateExtractStatus = uiState.templateExtractStatus,
+            hasGrid = uiState.intersectionGrid != null,
+            onExtractTemplates = onExtractTemplates
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // 범례
         LegendCard()
     }
@@ -482,6 +495,102 @@ private fun StatItem(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
+    }
+}
+
+/**
+ * 템플릿 추출 카드
+ */
+@Composable
+private fun TemplateExtractionCard(
+    isTemplateExtracted: Boolean,
+    isExtractingTemplate: Boolean,
+    templateExtractStatus: String,
+    hasGrid: Boolean,
+    onExtractTemplates: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Template Matching",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "0수 이미지에서 템플릿을 추출하여 기물 종류를 인식합니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onExtractTemplates,
+                    enabled = hasGrid && !isTemplateExtracted && !isExtractingTemplate
+                ) {
+                    if (isExtractingTemplate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(
+                        text = if (isExtractingTemplate) "추출 중..." else "템플릿 추출 (0수)"
+                    )
+                }
+
+                if (isTemplateExtracted) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Extracted",
+                        tint = Color.Green,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            if (templateExtractStatus.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = templateExtractStatus,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        templateExtractStatus.startsWith("✅") -> Color(0xFF4CAF50)
+                        templateExtractStatus.startsWith("❌") -> Color(0xFFF44336)
+                        templateExtractStatus.startsWith("⚠️") -> Color(0xFFFF9800)
+                        else -> MaterialTheme.colorScheme.onTertiaryContainer
+                    }
+                )
+            }
+
+            if (!hasGrid) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "먼저 이미지를 로드하여 그리드를 검출하세요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.6f)
+                )
+            }
+        }
     }
 }
 

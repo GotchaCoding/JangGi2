@@ -1,5 +1,7 @@
 package com.example.janggi2.presentation.game
 
+import com.example.janggi2.domain.model.GameMode
+import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 
 /**
@@ -70,4 +72,43 @@ sealed class GameUiEvent {
      * User requested to continue playing from current replay position.
      */
     data object ContinueFromReplay : GameUiEvent()
+
+    /**
+     * Request AI to make a move.
+     */
+    data object RequestAiMove : GameUiEvent()
+
+    /**
+     * Set AI difficulty level.
+     */
+    data class SetAiDifficulty(val difficulty: Int) : GameUiEvent()
+
+    /**
+     * Show new game dialog.
+     */
+    data object ShowNewGameDialog : GameUiEvent()
+
+    /**
+     * Dismiss new game dialog.
+     */
+    data object DismissNewGameDialog : GameUiEvent()
+
+    /**
+     * Start new game with specified settings.
+     */
+    data class StartNewGame(
+        val gameMode: GameMode,
+        val aiDifficulty: Int = 10,
+        val aiPlayer: Player = Player.HAN
+    ) : GameUiEvent()
+
+    /**
+     * Show AI settings dialog (for mid-game difficulty adjustment).
+     */
+    data object ShowAiSettingsDialog : GameUiEvent()
+
+    /**
+     * Dismiss AI settings dialog.
+     */
+    data object DismissAiSettingsDialog : GameUiEvent()
 }

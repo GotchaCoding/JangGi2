@@ -25,9 +25,11 @@ import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.presentation.common.ConfirmDialog
+import com.example.janggi2.presentation.game.components.AiSettingsDialog
 import com.example.janggi2.presentation.game.components.GameControls
 import com.example.janggi2.presentation.game.components.HighlightLayer
 import com.example.janggi2.presentation.game.components.JangGiBoard
+import com.example.janggi2.presentation.game.components.NewGameDialog
 import com.example.janggi2.presentation.game.components.PieceView
 import com.example.janggi2.presentation.game.components.ReplayControls
 import com.example.janggi2.presentation.game.components.TurnIndicator
@@ -153,6 +155,10 @@ fun GameScreen(
                     },
                     onDebugClick = {
                         onNavigateToDebug()
+                    },
+                    isAiGame = uiState.gameState.gameMode.isAiGame(),
+                    onShowAiSettings = {
+                        viewModel.onEvent(GameUiEvent.ShowAiSettingsDialog)
                     }
                 )
             }
@@ -172,6 +178,34 @@ fun GameScreen(
             },
             onDismiss = {
                 viewModel.onEvent(GameUiEvent.DismissGameOverDialog)
+            }
+        )
+    }
+
+    // New game dialog
+    if (uiState.showNewGameDialog) {
+        NewGameDialog(
+            onDismiss = { viewModel.onEvent(GameUiEvent.DismissNewGameDialog) },
+            onStartGame = { mode, difficulty, player ->
+                viewModel.onEvent(
+                    GameUiEvent.StartNewGame(
+                        gameMode = mode,
+                        aiDifficulty = difficulty,
+                        aiPlayer = player
+                    )
+                )
+            }
+        )
+    }
+
+    // AI settings dialog
+    if (uiState.showAiSettingsDialog) {
+        AiSettingsDialog(
+            currentDifficulty = uiState.gameState.aiDifficulty,
+            onDismiss = { viewModel.onEvent(GameUiEvent.DismissAiSettingsDialog) },
+            onConfirm = { newDifficulty ->
+                viewModel.onEvent(GameUiEvent.SetAiDifficulty(newDifficulty))
+                viewModel.onEvent(GameUiEvent.DismissAiSettingsDialog)
             }
         )
     }

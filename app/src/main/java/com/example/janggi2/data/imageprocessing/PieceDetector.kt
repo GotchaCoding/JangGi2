@@ -9,6 +9,7 @@ import com.example.janggi2.domain.model.Position
 import org.opencv.android.Utils
 import org.opencv.core.Mat
 import org.opencv.core.Point
+import org.opencv.core.Rect
 import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
 import javax.inject.Inject
@@ -21,10 +22,14 @@ import kotlin.math.min
  * 교차점 기반 기물 검출기
  *
  * 각 교차점 주변 영역에서 기물의 존재 여부와 진영(초/한)을 판별합니다.
+ * 템플릿 매칭을 사용하여 기물 종류를 인식합니다.
  * 카카오장기의 기물 색상에 최적화되어 있습니다.
  */
 @Singleton
-class PieceDetector @Inject constructor() {
+class PieceDetector @Inject constructor(
+    private val templateExtractor: TemplateExtractor,
+    private val templateMatcher: TemplateMatcher
+) {
 
     companion object {
         private const val TAG = "PieceDetector"
@@ -35,6 +40,57 @@ class PieceDetector @Inject constructor() {
         // 기물 배경색(흰색/크림색) 검출 임계값
         private const val PIECE_BG_MIN_VALUE = 0.85f  // 밝기
         private const val PIECE_BG_MAX_SATURATION = 0.15f  // 낮은 채도
+    }
+
+    // 템플릿 저장소
+    private var pieceTemplates: PieceTemplates? = null
+
+    /**
+     * 템플릿 초기화 여부 확인
+     */
+    fun isTemplateInitialized(): Boolean = pieceTemplates?.isInitialized() == true
+
+    /**
+     * 0수 이미지에서 템플릿 초기화
+     *
+     * @param bitmap 0수 스크린샷
+     * @param grid 교차점 그리드 정보
+     * @return 추출된 템플릿 개수
+     */
+    suspend fun initializeTemplates(
+        bitmap: Bitmap,
+        grid: IntersectionCalculator.IntersectionGrid
+    ): Int {
+        Log.i(TAG, "=== Initializing Templates ===")
+
+        // 기존 템플릿 정리
+        pieceTemplates?.clear()
+
+        // 새 템플릿 추출
+        val templates = templateExtractor.extractTemplates(bitmap, grid)
+        pieceTemplates = templates
+
+        val count = templates.size()
+        Log.i(TAG, "Templates initialized: $count types")
+        Log.i(TAG, templates.getSummary())
+
+        return count
+    }
+
+    /**
+     * 템플릿 초기화 (외부에서 추출된 템플릿 사용)
+     */
+    fun setTemplates(templates: PieceTemplates) {
+        pieceTemplates?.clear()
+        pieceTemplates = templates
+        Log.i(TAG, "Templates set externally: ${templates.getSummary()}")
+    }
+
+    /**
+     * 템플릿 상태 요약
+     */
+    fun getTemplateStatus(): String {
+        return pieceTemplates?.getSummary() ?: "템플릿 미초기화"
     }
 
     /**
@@ -201,11 +257,40 @@ class PieceDetector @Inject constructor() {
                 DominantColor.EMPTY -> return null
             }
 
+            // 4. 템플릿 매칭으로 기물 종류 인식
+            var pieceType = PieceType.UNKNOWN
+            var matchConfidence = 0f
+
+            val templates = pieceTemplates
+            if (templates != null && templates.isInitialized()) {
+                val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius)
+                if (croppedMat != null) {
+                    try {
+                        val matchResult = templateMatcher.matchPiece(croppedMat, templates, player)
+                        if (matchResult != null) {
+                            pieceType = matchResult.pieceType
+                            matchConfidence = matchResult.confidence
+                            Log.v(TAG, "Template match at ${intersection.position}: " +
+                                    "$pieceType (score: ${String.format("%.3f", matchResult.matchScore)})")
+                        }
+                    } finally {
+                        croppedMat.release()
+                    }
+                }
+            }
+
+            // 최종 신뢰도: 색상 분석과 템플릿 매칭의 조합
+            val finalConfidence = if (matchConfidence > 0f) {
+                (colorAnalysis.confidence + matchConfidence) / 2f
+            } else {
+                colorAnalysis.confidence
+            }
+
             return DetectedPiece(
                 position = intersection.position,
                 player = player,
-                pieceType = PieceType.UNKNOWN,
-                confidence = colorAnalysis.confidence,
+                pieceType = pieceType,
+                confidence = finalConfidence,
                 pixelX = intersection.pixelX,
                 pixelY = intersection.pixelY
             )
@@ -213,6 +298,38 @@ class PieceDetector @Inject constructor() {
             Log.w(TAG, "Failed to detect piece at ${intersection.position}", e)
             return null
         }
+    }
+
+    /**
+     * 기물 영역을 크롭하여 Mat으로 반환
+     */
+    private fun cropPieceRegion(
+        bitmap: Bitmap,
+        centerX: Int,
+        centerY: Int,
+        radius: Int
+    ): Mat? {
+        val cropRadius = (radius * 0.9f).toInt()
+        val left = max(0, centerX - cropRadius)
+        val top = max(0, centerY - cropRadius)
+        val right = min(bitmap.width, centerX + cropRadius)
+        val bottom = min(bitmap.height, centerY + cropRadius)
+
+        if (right <= left || bottom <= top) {
+            return null
+        }
+
+        // 크롭된 비트맵 생성
+        val width = right - left
+        val height = bottom - top
+        val croppedBitmap = Bitmap.createBitmap(bitmap, left, top, width, height)
+
+        // Mat으로 변환
+        val mat = Mat()
+        Utils.bitmapToMat(croppedBitmap, mat)
+        croppedBitmap.recycle()
+
+        return mat
     }
 
     /**

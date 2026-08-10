@@ -188,7 +188,7 @@ class BoardDetector @Inject constructor() {
                 saturation in 0.1f..0.6f &&
                 value in 0.3f..0.9f
 
-        // 회색/베이지 계열 보드
+    // 회색/베이지 계열 보스톡드
         val isNeutralBoard = saturation < 0.25f &&
                 value in 0.35f..0.85f
 

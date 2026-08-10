@@ -78,7 +78,11 @@ class LineDetectionDebugViewModel @Inject constructor(
         // 교차점 검증 관련
         val intersectionVerifications: Map<Position, IntersectionVerification> = emptyMap(),
         val selectedPosition: Position? = null,
-        val showVerificationDialog: Boolean = false
+        val showVerificationDialog: Boolean = false,
+        // 템플릿 추출 관련
+        val isTemplateExtracted: Boolean = false,
+        val isExtractingTemplate: Boolean = false,
+        val templateExtractStatus: String = ""
     )
 
     /**
@@ -298,6 +302,133 @@ class LineDetectionDebugViewModel @Inject constructor(
             )
         }
     }
+
+    /**
+     * 현재 이미지에서 템플릿 추출 (0수 이미지용)
+     *
+     * 0수 초기 배치 스크린샷에서 모든 기물 템플릿을 추출하여
+     * 이후 기물 인식에 사용합니다.
+     */
+    fun extractTemplatesFromCurrentImage() {
+        val currentState = _uiState.value
+        val bitmap = currentState.originalBitmap
+        val grid = currentState.intersectionGrid
+
+        if (bitmap == null || grid == null) {
+            Log.w(TAG, "Cannot extract templates: bitmap or grid is null")
+            _uiState.update { it.copy(
+                templateExtractStatus = "❌ 이미지 또는 그리드 정보가 없습니다"
+            ) }
+            return
+        }
+
+        viewModelScope.launch {
+            Log.i(TAG, "=== Template Extraction Started ===")
+            _uiState.update { it.copy(
+                isExtractingTemplate = true,
+                templateExtractStatus = "템플릿 추출 중..."
+            ) }
+
+            try {
+                val templateCount = pieceDetector.initializeTemplates(bitmap, grid)
+
+                if (pieceDetector.isTemplateInitialized()) {
+                    Log.i(TAG, "Template extraction successful: $templateCount types")
+                    _uiState.update { it.copy(
+                        isExtractingTemplate = false,
+                        isTemplateExtracted = true,
+                        templateExtractStatus = "✅ 템플릿 ${templateCount}종 추출 완료"
+                    ) }
+
+                    // 템플릿 추출 후 기물 재검출
+                    redetectPiecesWithTemplates()
+                } else {
+                    Log.w(TAG, "Template extraction incomplete: $templateCount types")
+                    _uiState.update { it.copy(
+                        isExtractingTemplate = false,
+                        isTemplateExtracted = false,
+                        templateExtractStatus = "⚠️ 템플릿 추출 불완전: ${templateCount}종 (14종 필요)"
+                    ) }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Template extraction failed", e)
+                _uiState.update { it.copy(
+                    isExtractingTemplate = false,
+                    isTemplateExtracted = false,
+                    templateExtractStatus = "❌ 추출 실패: ${e.message}"
+                ) }
+            }
+        }
+    }
+
+    /**
+     * 템플릿을 사용하여 기물 재검출
+     */
+    private suspend fun redetectPiecesWithTemplates() {
+        val currentState = _uiState.value
+        val bitmap = currentState.originalBitmap ?: return
+        val grid = currentState.intersectionGrid ?: return
+
+        Log.d(TAG, "Re-detecting pieces with templates...")
+
+        // 기물 재검출
+        val pieces = pieceDetector.detectAllPieces(bitmap, grid)
+
+        // 디버그 이미지 재생성
+        val detectedLines = currentState.detectedLines
+        val debugBitmap = if (detectedLines != null) {
+            createDebugBitmap(bitmap, detectedLines, grid, pieces)
+        } else {
+            pieceDetector.createDebugImage(bitmap, pieces, grid)
+        }
+
+        // 통계 업데이트
+        val stats = currentState.stats?.copy(
+            pieceCount = pieces.size,
+            choCount = pieces.count { it.player == Player.CHO },
+            hanCount = pieces.count { it.player == Player.HAN },
+            avgPieceConfidence = if (pieces.isNotEmpty()) {
+                pieces.map { it.confidence }.average().toFloat()
+            } else 0f
+        )
+
+        // 교차점 검증 데이터 업데이트
+        val intersectionVerifications = grid.intersections.associate { intersection ->
+            val detectedPiece = pieces.find { it.position == intersection.position }
+            val intersectionId = IntersectionVerification.calculateIntersectionId(
+                intersection.position.row,
+                intersection.position.col
+            )
+            val analysisDetails = pieceDetector.analyzeIntersectionDetails(
+                bitmap,
+                intersection,
+                intersectionId
+            )
+            intersection.position to IntersectionVerification(
+                position = intersection.position,
+                intersectionId = intersectionId,
+                pixelX = intersection.pixelX,
+                pixelY = intersection.pixelY,
+                detectedPiece = detectedPiece,
+                analysisDetails = analysisDetails
+            )
+        }
+
+        _uiState.update { it.copy(
+            detectedPieces = pieces,
+            debugBitmap = debugBitmap,
+            stats = stats,
+            intersectionVerifications = intersectionVerifications
+        ) }
+
+        Log.i(TAG, "Re-detection complete: ${pieces.size} pieces, " +
+                "Types: ${pieces.groupBy { it.pieceType }.mapValues { it.value.size }}")
+    }
+
+    /**
+     * 템플릿 초기화 여부 확인
+     */
+    fun isTemplateInitialized(): Boolean = pieceDetector.isTemplateInitialized()
 
     /**
      * 기물 검증 결과 저장

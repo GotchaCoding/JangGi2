@@ -36,6 +36,8 @@ fun GameControls(
     onImportClick: () -> Unit,
     onResetClick: () -> Unit,
     onDebugClick: () -> Unit = {},
+    isAiGame: Boolean = false,
+    onShowAiSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -67,7 +69,7 @@ fun GameControls(
             }
         }
 
-        // Middle row: Save, Load, Import
+        // Middle row: Save, Load, Import, AI Settings
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
@@ -82,6 +84,13 @@ fun GameControls(
 
             TextButton(onClick = onImportClick) {
                 Text("사진 불러오기")
+            }
+
+            // AI settings button (only show when in AI game mode)
+            if (isAiGame) {
+                TextButton(onClick = onShowAiSettings) {
+                    Text("AI 설정")
+                }
             }
 
             TextButton(onClick = onDebugClick) {

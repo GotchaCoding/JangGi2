@@ -2,14 +2,19 @@ package com.example.janggi2.presentation.game
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.janggi2.domain.model.GameMode
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
+import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.domain.model.initialGameState
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.rules.CheckDetector
 import com.example.janggi2.domain.rules.GameRules
+import com.example.janggi2.domain.ai.AiEngine
+import com.example.janggi2.domain.usecase.GetAiMoveUseCase
+import com.example.janggi2.domain.usecase.InitializeAiUseCase
 import com.example.janggi2.domain.usecase.LoadGameUseCase
 import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
 import com.example.janggi2.domain.usecase.SaveGameUseCase
@@ -19,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import android.util.Log
 
 /**
  * UI state for the game screen.
@@ -28,7 +34,9 @@ data class GameUiState(
     val selectedPiece: Piece? = null,
     val validMoves: List<Position> = emptyList(),
     val showGameOverDialog: Boolean = false,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val showNewGameDialog: Boolean = false,
+    val showAiSettingsDialog: Boolean = false
 )
 
 /**
@@ -40,8 +48,14 @@ class GameViewModel @Inject constructor(
     private val gameRepository: GameRepository,
     private val saveGameUseCase: SaveGameUseCase,
     private val loadGameUseCase: LoadGameUseCase,
-    private val loadGameForReplayUseCase: LoadGameForReplayUseCase
+    private val loadGameForReplayUseCase: LoadGameForReplayUseCase,
+    private val aiEngine: AiEngine,
+    private val initializeAiUseCase: InitializeAiUseCase,
+    private val getAiMoveUseCase: GetAiMoveUseCase
 ) : ViewModel() {
+    companion object {
+        private const val TAG = "GameViewModel"
+    }
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
@@ -51,6 +65,16 @@ class GameViewModel @Inject constructor(
     init {
         // Try to load auto-saved game, otherwise start new game
         loadAutoSaveOrStartNew()
+
+        // Initialize AI engine in background
+        viewModelScope.launch {
+            try {
+                initializeAiUseCase()
+                Log.d(TAG, "AI engine initialized successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize AI engine", e)
+            }
+        }
     }
 
     /**
@@ -59,7 +83,7 @@ class GameViewModel @Inject constructor(
     fun onEvent(event: GameUiEvent) {
         when (event) {
             is GameUiEvent.BoardTapped -> handleBoardTap(event.position)
-            is GameUiEvent.ResetGame -> resetGame()
+            is GameUiEvent.ResetGame -> showNewGameDialog()
             is GameUiEvent.DismissGameOverDialog -> dismissGameOverDialog()
             is GameUiEvent.Undo -> undo()
             is GameUiEvent.Redo -> redo()
@@ -71,6 +95,17 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.ReplayNext -> replayNext()
             is GameUiEvent.ReplayLast -> replayLast()
             is GameUiEvent.ContinueFromReplay -> continueFromReplay()
+            is GameUiEvent.RequestAiMove -> requestAiMove()
+            is GameUiEvent.SetAiDifficulty -> setAiDifficulty(event.difficulty)
+            is GameUiEvent.ShowNewGameDialog -> showNewGameDialog()
+            is GameUiEvent.DismissNewGameDialog -> dismissNewGameDialog()
+            is GameUiEvent.StartNewGame -> startNewGame(
+                event.gameMode,
+                event.aiDifficulty,
+                event.aiPlayer
+            )
+            is GameUiEvent.ShowAiSettingsDialog -> showAiSettingsDialog()
+            is GameUiEvent.DismissAiSettingsDialog -> dismissAiSettingsDialog()
         }
     }
 
@@ -159,6 +194,11 @@ class GameViewModel @Inject constructor(
 
             // Auto-save after each move
             autoSave()
+
+            // Check if it's AI's turn and request AI move
+            if (newGameState.isAiTurn() && !newGameState.isGameOver()) {
+                requestAiMove()
+            }
         }
     }
 
@@ -312,9 +352,74 @@ class GameViewModel @Inject constructor(
             selectedPiece = null,
             validMoves = emptyList(),
             showGameOverDialog = false,
-            isLoading = false
+            isLoading = false,
+            showNewGameDialog = false,
+            showAiSettingsDialog = false
         )
         autoSave()
+    }
+
+    /**
+     * Shows the new game dialog.
+     */
+    private fun showNewGameDialog() {
+        _uiState.value = _uiState.value.copy(showNewGameDialog = true)
+    }
+
+    /**
+     * Dismisses the new game dialog.
+     */
+    private fun dismissNewGameDialog() {
+        _uiState.value = _uiState.value.copy(showNewGameDialog = false)
+    }
+
+    /**
+     * Starts a new game with specified settings.
+     */
+    private fun startNewGame(
+        gameMode: GameMode,
+        aiDifficulty: Int,
+        aiPlayer: Player
+    ) {
+        // Create new game state with specified settings
+        val newGameState = initialGameState(
+            gameMode = gameMode,
+            aiDifficulty = aiDifficulty,
+            aiPlayer = aiPlayer
+        )
+
+        _uiState.value = GameUiState(
+            gameState = newGameState,
+            selectedPiece = null,
+            validMoves = emptyList(),
+            showGameOverDialog = false,
+            isLoading = false,
+            showNewGameDialog = false,
+            showAiSettingsDialog = false
+        )
+
+        // Auto-save
+        autoSave()
+
+        // If AI plays first (CHO), request AI move
+        if (newGameState.isAiTurn()) {
+            Log.d(TAG, "AI plays first, requesting AI move")
+            requestAiMove()
+        }
+    }
+
+    /**
+     * Shows the AI settings dialog.
+     */
+    private fun showAiSettingsDialog() {
+        _uiState.value = _uiState.value.copy(showAiSettingsDialog = true)
+    }
+
+    /**
+     * Dismisses the AI settings dialog.
+     */
+    private fun dismissAiSettingsDialog() {
+        _uiState.value = _uiState.value.copy(showAiSettingsDialog = false)
     }
 
     /**
@@ -444,5 +549,89 @@ class GameViewModel @Inject constructor(
         )
         // Auto-save after continuing from replay
         autoSave()
+    }
+
+    /**
+     * Requests AI to calculate and make a move.
+     */
+    private fun requestAiMove() {
+        val currentState = _uiState.value
+
+        // Don't request AI move if game is over or in replay mode
+        if (currentState.gameState.isGameOver() || currentState.gameState.isReplayMode) {
+            return
+        }
+
+        // Don't request AI move if not AI's turn
+        if (!currentState.gameState.isAiTurn()) {
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                // Show loading state
+                _uiState.value = currentState.copy(isLoading = true)
+
+                Log.d(TAG, "Requesting AI move (difficulty: ${currentState.gameState.aiDifficulty})")
+
+                // Calculate AI move
+                val aiMove = getAiMoveUseCase(
+                    gameState = currentState.gameState,
+                    thinkTimeMs = calculateThinkTime(currentState.gameState.aiDifficulty)
+                )
+
+                if (aiMove != null) {
+                    Log.d(TAG, "AI move: ${aiMove.from} -> ${aiMove.to}")
+
+                    // Get the piece at the from position
+                    val piece = currentState.gameState.getPieceAt(aiMove.from)
+
+                    if (piece != null) {
+                        // Execute the AI move
+                        executeMove(piece, aiMove.to)
+                    } else {
+                        Log.e(TAG, "No piece found at AI move source position: ${aiMove.from}")
+                    }
+                } else {
+                    Log.w(TAG, "AI returned no move")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error requesting AI move", e)
+            } finally {
+                // Clear loading state
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+
+    /**
+     * Sets AI difficulty level.
+     */
+    private fun setAiDifficulty(difficulty: Int) {
+        val currentState = _uiState.value
+        val newGameState = currentState.gameState.copy(aiDifficulty = difficulty)
+        _uiState.value = currentState.copy(gameState = newGameState)
+        Log.d(TAG, "AI difficulty set to $difficulty")
+    }
+
+    /**
+     * Calculates think time based on difficulty level.
+     * Lower difficulty = less time, higher difficulty = more time.
+     */
+    private fun calculateThinkTime(difficulty: Int): Int {
+        return when {
+            difficulty <= 5 -> 1000   // Beginner: 1 second
+            difficulty <= 10 -> 2000  // Medium: 2 seconds
+            difficulty <= 15 -> 3000  // Hard: 3 seconds
+            else -> 5000              // Expert: 5 seconds
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Clean up AI engine resources
+        aiEngine.destroy()
+        Log.d(TAG, "AI engine destroyed")
     }
 }

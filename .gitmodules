@@ -1,0 +1,3 @@
+[submodule "app/src/main/cpp/fairystockfish"]
+	path = app/src/main/cpp/fairystockfish
+	url = https://github.com/fairy-stockfish/Fairy-Stockfish.git
