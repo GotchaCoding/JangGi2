@@ -17,6 +17,7 @@ import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * 교차점 기반 기물 검출기
@@ -28,7 +29,8 @@ import kotlin.math.min
 @Singleton
 class PieceDetector @Inject constructor(
     private val templateExtractor: TemplateExtractor,
-    private val templateMatcher: TemplateMatcher
+    private val templateMatcher: TemplateMatcher,
+    private val ocrRecognizer: PieceOcrRecognizer
 ) {
 
     companion object {
@@ -37,9 +39,11 @@ class PieceDetector @Inject constructor(
         // 기물 검출을 위한 최소 색상 픽셀 비율
         private const val MIN_PIECE_RATIO = 0.05f
 
-        // 기물 배경색(흰색/크림색) 검출 임계값
-        private const val PIECE_BG_MIN_VALUE = 0.85f  // 밝기
-        private const val PIECE_BG_MAX_SATURATION = 0.15f  // 낮은 채도
+        // 보드 배경색과의 RGB 거리 임계값 (이 이상 차이나면 "보드색이 아님" = 기물로 추정)
+        private const val BOARD_COLOR_DISTANCE_THRESHOLD = 45.0
+
+        // 교차점 주변에서 보드색이 아닌 픽셀의 비율이 이 값을 넘으면 기물이 있다고 판단
+        private const val PIECE_FOREIGN_RATIO_THRESHOLD = 0.35f
     }
 
     // 템플릿 저장소
@@ -131,14 +135,17 @@ class PieceDetector @Inject constructor(
      */
     data class PieceAnalysisDetails(
         val intersectionId: Int,              // 0-89 고유 번호
-        val hasPieceBackground: Boolean,      // 흰색 배경 유무
-        val backgroundRatio: Float,           // 흰색 픽셀 비율 (0-1)
+        val hasPieceBackground: Boolean,      // 기물 유무 (보드 배경색 대비 이질적 픽셀 비율로 판단)
+        val backgroundRatio: Float,           // 보드 배경색과 일치하는 픽셀 비율 (0-1)
         val dominantColor: DominantColor,     // 지배적 색상
         val colorConfidence: Float,           // 색상 판단 신뢰도
         val redPixelRatio: Float,             // 빨강 픽셀 비율
         val bluePixelRatio: Float,            // 파랑 픽셀 비율
         val greenPixelRatio: Float,           // 녹색 픽셀 비율
         val totalColoredPixels: Int,          // 분석된 총 색상 픽셀 수
+        val ocrText: String,                  // OCR이 읽은 문자
+        val ocrConfidence: Float,             // OCR 신뢰도
+        val ocrPieceType: PieceType?,         // OCR로 판별된 기물 종류
         val analysisReason: String            // 분석 이유 문자열
     ) {
         companion object {
@@ -151,7 +158,10 @@ class PieceDetector @Inject constructor(
                 redCount: Int,
                 blueCount: Int,
                 greenCount: Int,
-                totalColored: Int
+                totalColored: Int,
+                ocrText: String = "",
+                ocrConfidence: Float = 0f,
+                ocrPieceType: PieceType? = null
             ): PieceAnalysisDetails {
                 val redRatio = if (totalColored > 0) redCount.toFloat() / totalColored else 0f
                 val blueRatio = if (totalColored > 0) blueCount.toFloat() / totalColored else 0f
@@ -160,9 +170,9 @@ class PieceDetector @Inject constructor(
                 val reason = buildString {
                     append("[#$intersectionId] ")
                     if (!hasPieceBackground) {
-                        append("기물 없음: 흰색 배경 ${(backgroundRatio * 100).toInt()}% (30% 미만)")
+                        append("기물 없음: 보드 배경색 일치 ${(backgroundRatio * 100).toInt()}% (65% 이상)")
                     } else {
-                        append("기물 감지: 배경 ${(backgroundRatio * 100).toInt()}%")
+                        append("기물 감지: 보드 배경색 일치 ${(backgroundRatio * 100).toInt()}% (65% 미만)")
                         if (totalColored >= 5) {
                             append("\n색상: ${dominantColor.name} (${(colorConfidence * 100).toInt()}%)")
                             append("\n- 빨강: ${(redRatio * 100).toInt()}%")
@@ -172,6 +182,8 @@ class PieceDetector @Inject constructor(
                         } else {
                             append("\n색상 픽셀 부족: $totalColored (최소 5 필요)")
                         }
+                        append("\nOCR 인식: ${if (ocrText.isNotBlank()) "'$ocrText'" else "(문자 없음)"} " +
+                                "(${(ocrConfidence * 100).toInt()}%) -> ${ocrPieceType?.name ?: "판별 실패"}")
                     }
                 }
 
@@ -185,6 +197,9 @@ class PieceDetector @Inject constructor(
                     bluePixelRatio = blueRatio,
                     greenPixelRatio = greenRatio,
                     totalColoredPixels = totalColored,
+                    ocrText = ocrText,
+                    ocrConfidence = ocrConfidence,
+                    ocrPieceType = ocrPieceType,
                     analysisReason = reason
                 )
             }
@@ -194,16 +209,69 @@ class PieceDetector @Inject constructor(
     /**
      * 모든 교차점에서 기물을 검출합니다.
      */
-    fun detectAllPieces(
+    /**
+     * 보드 배경색 추정
+     *
+     * 서로 인접한 4개 교차점의 정중앙(칸의 중심)은 기물이 놓이는 위치(교차점)와
+     * 겹치지 않으므로 항상 순수한 보드 배경입니다. 이 지점들을 샘플링해 실제
+     * 이미지의 보드색을 직접 측정합니다. 특정 기물 디자인(흰 배경 등)을 가정하는
+     * 대신, "교차점 주변 색이 이 보드색에서 얼마나 벗어나는지"로 기물 유무를
+     * 판단하기 위한 기준값입니다.
+     */
+    fun estimateBoardBackgroundColor(
+        bitmap: Bitmap,
+        grid: IntersectionCalculator.IntersectionGrid
+    ): IntArray {
+        val byPosition = grid.intersections.associateBy { it.position }
+        val maxCol = grid.intersections.maxOf { it.position.col }
+        val maxRow = grid.intersections.maxOf { it.position.row }
+
+        val reds = mutableListOf<Int>()
+        val greens = mutableListOf<Int>()
+        val blues = mutableListOf<Int>()
+
+        for (row in 0 until maxRow) {
+            for (col in 0 until maxCol) {
+                val a = byPosition[Position(col, row)] ?: continue
+                val b = byPosition[Position(col + 1, row)] ?: continue
+                val c = byPosition[Position(col, row + 1)] ?: continue
+                val d = byPosition[Position(col + 1, row + 1)] ?: continue
+
+                val cx = ((a.pixelX + b.pixelX + c.pixelX + d.pixelX) / 4f).toInt()
+                val cy = ((a.pixelY + b.pixelY + c.pixelY + d.pixelY) / 4f).toInt()
+
+                if (cx < 0 || cx >= bitmap.width || cy < 0 || cy >= bitmap.height) continue
+
+                val pixel = bitmap.getPixel(cx, cy)
+                reds.add(Color.red(pixel))
+                greens.add(Color.green(pixel))
+                blues.add(Color.blue(pixel))
+            }
+        }
+
+        val boardColor = intArrayOf(median(reds), median(greens), median(blues))
+        Log.d(TAG, "Estimated board background color: RGB(${boardColor[0]}, ${boardColor[1]}, ${boardColor[2]}) " +
+                "from ${reds.size} cell-center samples")
+        return boardColor
+    }
+
+    private fun median(values: List<Int>): Int {
+        if (values.isEmpty()) return 0
+        val sorted = values.sorted()
+        return sorted[sorted.size / 2]
+    }
+
+    suspend fun detectAllPieces(
         bitmap: Bitmap,
         grid: IntersectionCalculator.IntersectionGrid
     ): List<DetectedPiece> {
         Log.d(TAG, "=== Piece Detection Started ===")
 
+        val boardColor = estimateBoardBackgroundColor(bitmap, grid)
         val detectedPieces = mutableListOf<DetectedPiece>()
 
         for (intersection in grid.intersections) {
-            val piece = detectPieceAt(bitmap, intersection)
+            val piece = detectPieceAt(bitmap, intersection, boardColor)
             if (piece != null) {
                 detectedPieces.add(piece)
                 Log.d(TAG, "[${intersection.position.row},${intersection.position.col}] " +
@@ -222,9 +290,10 @@ class PieceDetector @Inject constructor(
     /**
      * 특정 교차점에서 기물을 검출합니다.
      */
-    fun detectPieceAt(
+    suspend fun detectPieceAt(
         bitmap: Bitmap,
-        intersection: IntersectionCalculator.BoardIntersection
+        intersection: IntersectionCalculator.BoardIntersection,
+        boardColor: IntArray
     ): DetectedPiece? {
         try {
             val centerX = intersection.pixelX.toInt()
@@ -237,8 +306,8 @@ class PieceDetector @Inject constructor(
                 return null
             }
 
-            // 1. 기물 존재 확인 (흰색/크림색 배경 검출)
-            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius)
+            // 1. 기물 존재 확인 (보드 배경색 대비 이질적인 픽셀 비율로 판단)
+            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius, boardColor)
             if (!presenceResult.hasPiece) {
                 return null
             }
@@ -257,24 +326,35 @@ class PieceDetector @Inject constructor(
                 DominantColor.EMPTY -> return null
             }
 
-            // 4. 템플릿 매칭으로 기물 종류 인식
+            // 4. OCR로 기물 종류 인식 (기물 위 글자를 직접 읽어 판별, 우선순위 1)
             var pieceType = PieceType.UNKNOWN
             var matchConfidence = 0f
 
-            val templates = pieceTemplates
-            if (templates != null && templates.isInitialized()) {
-                val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius)
-                if (croppedMat != null) {
-                    try {
-                        val matchResult = templateMatcher.matchPiece(croppedMat, templates, player)
-                        if (matchResult != null) {
-                            pieceType = matchResult.pieceType
-                            matchConfidence = matchResult.confidence
-                            Log.v(TAG, "Template match at ${intersection.position}: " +
-                                    "$pieceType (score: ${String.format("%.3f", matchResult.matchScore)})")
+            val ocrResult = ocrRecognizer.recognizePiece(bitmap, centerX, centerY, radius)
+            if (ocrResult.pieceType != null) {
+                pieceType = ocrResult.pieceType
+                matchConfidence = ocrResult.confidence
+                Log.v(TAG, "OCR match at ${intersection.position}: $pieceType " +
+                        "('${ocrResult.recognizedText}', confidence: ${String.format("%.2f", ocrResult.confidence)})")
+            }
+
+            // 5. OCR 실패 시 템플릿 매칭으로 폴백 (0수 템플릿이 추출된 경우에만)
+            if (pieceType == PieceType.UNKNOWN) {
+                val templates = pieceTemplates
+                if (templates != null && templates.isInitialized()) {
+                    val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius)
+                    if (croppedMat != null) {
+                        try {
+                            val matchResult = templateMatcher.matchPiece(croppedMat, templates, player)
+                            if (matchResult != null) {
+                                pieceType = matchResult.pieceType
+                                matchConfidence = matchResult.confidence
+                                Log.v(TAG, "Template match at ${intersection.position}: " +
+                                        "$pieceType (score: ${String.format("%.3f", matchResult.matchScore)})")
+                            }
+                        } finally {
+                            croppedMat.release()
                         }
-                    } finally {
-                        croppedMat.release()
                     }
                 }
             }
@@ -337,12 +417,14 @@ class PieceDetector @Inject constructor(
      * @param bitmap 분석할 비트맵 이미지
      * @param intersection 분석할 교차점 정보
      * @param intersectionId 교차점 고유 번호 (0-89)
+     * @param boardColor [estimateBoardBackgroundColor]로 미리 계산한 보드 배경색 (RGB)
      * @return 분석 상세 정보
      */
-    fun analyzeIntersectionDetails(
+    suspend fun analyzeIntersectionDetails(
         bitmap: Bitmap,
         intersection: IntersectionCalculator.BoardIntersection,
-        intersectionId: Int
+        intersectionId: Int,
+        boardColor: IntArray
     ): PieceAnalysisDetails {
         try {
             val centerX = intersection.pixelX.toInt()
@@ -365,8 +447,8 @@ class PieceDetector @Inject constructor(
                 )
             }
 
-            // 1. 기물 존재 확인 (흰색/크림색 배경 검출)
-            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius)
+            // 1. 기물 존재 확인 (보드 배경색 대비 이질적인 픽셀 비율로 판단)
+            val presenceResult = detectPiecePresence(bitmap, centerX, centerY, radius, boardColor)
 
             if (!presenceResult.hasPiece) {
                 return PieceAnalysisDetails.create(
@@ -385,6 +467,9 @@ class PieceDetector @Inject constructor(
             // 2. 기물 색상 분석 (테두리 색상으로 진영 판별)
             val colorAnalysis = analyzeKakaoPieceColor(bitmap, centerX, centerY, radius)
 
+            // 3. OCR 분석 (디버깅용: 실제로 어떤 글자를 읽었는지 확인)
+            val ocrResult = ocrRecognizer.recognizePiece(bitmap, centerX, centerY, radius)
+
             return PieceAnalysisDetails.create(
                 intersectionId = intersectionId,
                 hasPieceBackground = true,
@@ -394,7 +479,10 @@ class PieceDetector @Inject constructor(
                 redCount = colorAnalysis.redCount,
                 blueCount = colorAnalysis.blueCount,
                 greenCount = colorAnalysis.greenCount,
-                totalColored = colorAnalysis.totalColored
+                totalColored = colorAnalysis.totalColored,
+                ocrText = ocrResult.recognizedText,
+                ocrConfidence = ocrResult.confidence,
+                ocrPieceType = ocrResult.pieceType
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to analyze intersection details at ${intersection.position}", e)
@@ -421,19 +509,29 @@ class PieceDetector @Inject constructor(
     )
 
     /**
-     * 기물 존재 여부 확인 (흰색/크림색 배경 검출)
+     * 기물 존재 여부 확인
+     *
+     * 기물 자체의 색을 가정하지 않습니다. 대신 이 교차점 주변 픽셀이 실측한
+     * 보드 배경색([estimateBoardBackgroundColor])과 얼마나 다른지를 봅니다.
+     * 보드는 항상 넓은 단색 배경이므로, 기물이 없으면 이 영역 대부분이
+     * 보드색과 일치하고, 기물이 놓이면 그만큼 보드색 픽셀 비율이 줄어듭니다.
      */
     private fun detectPiecePresence(
         bitmap: Bitmap,
         centerX: Int,
         centerY: Int,
-        radius: Int
+        radius: Int,
+        boardColor: IntArray
     ): PiecePresenceResult {
-        val innerRadius = (radius * 0.5f).toInt()
-        var whitishCount = 0
+        val innerRadius = (radius * 0.55f).toInt()
+        var foreignCount = 0
         var totalCount = 0
 
-        val step = max(1, innerRadius / 5)
+        val step = max(1, innerRadius / 6)
+
+        val boardR = boardColor[0]
+        val boardG = boardColor[1]
+        val boardB = boardColor[2]
 
         for (dy in -innerRadius..innerRadius step step) {
             for (dx in -innerRadius..innerRadius step step) {
@@ -446,20 +544,22 @@ class PieceDetector @Inject constructor(
 
                 totalCount++
                 val pixel = bitmap.getPixel(px, py)
-                val hsv = FloatArray(3)
-                Color.colorToHSV(pixel, hsv)
 
-                // 흰색/크림색 (높은 밝기, 낮은 채도)
-                if (hsv[2] > PIECE_BG_MIN_VALUE && hsv[1] < PIECE_BG_MAX_SATURATION) {
-                    whitishCount++
+                val dr = Color.red(pixel) - boardR
+                val dg = Color.green(pixel) - boardG
+                val db = Color.blue(pixel) - boardB
+                val distance = sqrt((dr * dr + dg * dg + db * db).toDouble())
+
+                if (distance > BOARD_COLOR_DISTANCE_THRESHOLD) {
+                    foreignCount++
                 }
             }
         }
 
-        val ratio = if (totalCount > 0) whitishCount.toFloat() / totalCount else 0f
+        val foreignRatio = if (totalCount > 0) foreignCount.toFloat() / totalCount else 0f
         return PiecePresenceResult(
-            hasPiece = ratio > 0.3f,  // 30% 이상이 흰색이면 기물 있음
-            backgroundRatio = ratio
+            hasPiece = foreignRatio > PIECE_FOREIGN_RATIO_THRESHOLD,
+            backgroundRatio = 1f - foreignRatio  // 보드 배경색과 일치하는 픽셀 비율
         )
     }
 

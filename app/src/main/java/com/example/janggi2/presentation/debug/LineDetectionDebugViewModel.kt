@@ -163,6 +163,7 @@ class LineDetectionDebugViewModel @Inject constructor(
         Log.d(TAG, "Intersections: ${grid.intersections.size}")
 
         // 5. 기물 검출
+        val boardColor = pieceDetector.estimateBoardBackgroundColor(bitmap, grid)
         val pieces = pieceDetector.detectAllPieces(bitmap, grid)
 
         Log.d(TAG, "Pieces detected: ${pieces.size}")
@@ -195,7 +196,8 @@ class LineDetectionDebugViewModel @Inject constructor(
             val analysisDetails = pieceDetector.analyzeIntersectionDetails(
                 bitmap,
                 intersection,
-                intersectionId
+                intersectionId,
+                boardColor
             )
             intersection.position to IntersectionVerification(
                 position = intersection.position,
@@ -372,6 +374,7 @@ class LineDetectionDebugViewModel @Inject constructor(
         Log.d(TAG, "Re-detecting pieces with templates...")
 
         // 기물 재검출
+        val boardColor = pieceDetector.estimateBoardBackgroundColor(bitmap, grid)
         val pieces = pieceDetector.detectAllPieces(bitmap, grid)
 
         // 디버그 이미지 재생성
@@ -402,7 +405,8 @@ class LineDetectionDebugViewModel @Inject constructor(
             val analysisDetails = pieceDetector.analyzeIntersectionDetails(
                 bitmap,
                 intersection,
-                intersectionId
+                intersectionId,
+                boardColor
             )
             intersection.position to IntersectionVerification(
                 position = intersection.position,

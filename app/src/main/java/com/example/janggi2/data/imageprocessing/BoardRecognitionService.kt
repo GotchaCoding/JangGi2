@@ -86,7 +86,7 @@ class BoardRecognitionService @Inject constructor(
     /**
      * 선 검출 기반 정밀 인식
      */
-    private fun tryLineBasedDetection(
+    private suspend fun tryLineBasedDetection(
         bitmap: Bitmap,
         boardRegion: android.graphics.Rect
     ): ExtractedText? {

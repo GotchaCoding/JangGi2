@@ -3,6 +3,7 @@ package com.example.janggi2.data.imageprocessing
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -89,27 +90,27 @@ class PieceOcrRecognizer @Inject constructor(
             val preprocessedBitmap = preprocessPieceImage(croppedBitmap)
             Log.d(TAG, "Preprocessed: ${preprocessedBitmap.width}x${preprocessedBitmap.height}")
 
-            // 3. 한글 OCR 시도
-            val koreanResult = runOcr(preprocessedBitmap, koreanRecognizer, isKorean = true)
-
-            if (koreanResult.pieceType != null && koreanResult.confidence >= KOREAN_CONFIDENCE_THRESHOLD) {
-                Log.d(TAG, "Korean OCR success: ${koreanResult.recognizedText} -> ${koreanResult.pieceType}")
-                return@withContext koreanResult
+            // 3. 정방향 인식 시도
+            val uprightResult = recognizeOriented(preprocessedBitmap)
+            if (uprightResult.pieceType != null) {
+                Log.d(TAG, "Upright OCR success: ${uprightResult.recognizedText} -> ${uprightResult.pieceType}")
+                return@withContext uprightResult
             }
 
-            // 4. 한글 OCR 실패 시 한자 OCR 시도
-            val chineseResult = runOcr(preprocessedBitmap, chineseRecognizer, isKorean = false)
-
-            if (chineseResult.pieceType != null && chineseResult.confidence >= CHINESE_CONFIDENCE_THRESHOLD) {
-                Log.d(TAG, "Chinese OCR success: ${chineseResult.recognizedText} -> ${chineseResult.pieceType}")
-                return@withContext chineseResult.copy(usedChineseOcr = true)
+            // 4. 정방향 실패 시 180도 회전 인식 시도
+            // 상대 진영 기물은 보드 위에서 180도 뒤집혀 표시되는 경우가 많음
+            val rotatedBitmap = rotateBitmap(preprocessedBitmap, 180f)
+            val rotatedResult = recognizeOriented(rotatedBitmap)
+            if (rotatedResult.pieceType != null) {
+                Log.d(TAG, "Rotated OCR success: ${rotatedResult.recognizedText} -> ${rotatedResult.pieceType}")
+                return@withContext rotatedResult
             }
 
             // 5. 둘 다 실패 - 더 나은 결과 반환
-            val betterResult = if (koreanResult.confidence >= chineseResult.confidence) {
-                koreanResult
+            val betterResult = if (uprightResult.confidence >= rotatedResult.confidence) {
+                uprightResult
             } else {
-                chineseResult.copy(usedChineseOcr = true)
+                rotatedResult
             }
 
             Log.d(TAG, "OCR failed or low confidence: ${betterResult.recognizedText} (${betterResult.confidence})")
@@ -123,6 +124,35 @@ class PieceOcrRecognizer @Inject constructor(
                 confidence = 0f
             )
         }
+    }
+
+    /**
+     * 한글 OCR을 우선 시도하고, 실패하면 한자 OCR로 폴백합니다.
+     */
+    private suspend fun recognizeOriented(bitmap: Bitmap): OcrResult {
+        val koreanResult = runOcr(bitmap, koreanRecognizer, isKorean = true)
+        if (koreanResult.pieceType != null && koreanResult.confidence >= KOREAN_CONFIDENCE_THRESHOLD) {
+            return koreanResult
+        }
+
+        val chineseResult = runOcr(bitmap, chineseRecognizer, isKorean = false)
+        if (chineseResult.pieceType != null && chineseResult.confidence >= CHINESE_CONFIDENCE_THRESHOLD) {
+            return chineseResult.copy(usedChineseOcr = true)
+        }
+
+        return if (koreanResult.confidence >= chineseResult.confidence) {
+            koreanResult
+        } else {
+            chineseResult.copy(usedChineseOcr = true)
+        }
+    }
+
+    /**
+     * 비트맵을 주어진 각도만큼 회전합니다.
+     */
+    private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
+        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     /**
