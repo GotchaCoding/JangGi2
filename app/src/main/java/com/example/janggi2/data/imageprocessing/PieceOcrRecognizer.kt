@@ -15,8 +15,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.opencv.android.Utils
-import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.Point
+import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import javax.inject.Inject
@@ -43,6 +44,23 @@ class PieceOcrRecognizer @Inject constructor(
         // 전처리 파라미터
         private const val TARGET_OCR_SIZE = 150  // OCR 입력 크기 (픽셀)
         private const val CROP_SCALE = 0.85f     // 기물 영역 크롭 스케일 (중앙 85%)
+
+        // TEMP DEBUG: 전처리 결과를 눈으로 확인하기 위한 덤프 경로
+        private const val DEBUG_DUMP_DIR = "/sdcard/Android/data/com.example.janggi2/files/debug_crops"
+    }
+
+    /**
+     * TEMP DEBUG: 비트맵을 파일로 저장 (실패해도 무시)
+     */
+    private fun dumpDebugBitmap(name: String, bitmap: Bitmap) {
+        try {
+            java.io.File(DEBUG_DUMP_DIR).mkdirs()
+            java.io.FileOutputStream("$DEBUG_DUMP_DIR/$name.png").use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "debug dump failed: $name", e)
+        }
     }
 
     // ML Kit 인식기 (lazy 초기화)
@@ -89,6 +107,9 @@ class PieceOcrRecognizer @Inject constructor(
             // 2. 이미지 전처리
             val preprocessedBitmap = preprocessPieceImage(croppedBitmap)
             Log.d(TAG, "Preprocessed: ${preprocessedBitmap.width}x${preprocessedBitmap.height}")
+
+            // TEMP DEBUG: 실제 OCR 입력 이미지 확인용
+            dumpDebugBitmap("ocr_${centerX}_${centerY}", preprocessedBitmap)
 
             // 3. 정방향 인식 시도
             val uprightResult = recognizeOriented(preprocessedBitmap)
@@ -199,43 +220,60 @@ class PieceOcrRecognizer @Inject constructor(
             val gray = Mat()
             Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGB2GRAY)
 
-            // 2. 적응형 이진화 (글자를 선명하게)
-            val binary = Mat()
-            Imgproc.adaptiveThreshold(
-                gray, binary,
-                255.0,
-                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                Imgproc.THRESH_BINARY,
-                7, 2.0  // blockSize 7: 150x150 이미지에 최적화
+            // 2. 원형 마스크 바깥(기물 팔각/원형 테두리, 격자선)을 흰색으로 눌러서
+            //    이진화 시 테두리/격자선이 노이즈 점으로 섞여 들어가는 것을 방지
+            val circleMask = Mat(gray.size(), gray.type(), Scalar(0.0))
+            Imgproc.circle(
+                circleMask,
+                Point(gray.cols() / 2.0, gray.rows() / 2.0),
+                (min(gray.cols(), gray.rows()) * 0.42).toInt(),
+                Scalar(255.0),
+                -1
             )
+            val masked = Mat(gray.size(), gray.type(), Scalar(255.0))
+            gray.copyTo(masked, circleMask)
+            circleMask.release()
 
-            // 3. 모폴로지 연산 (노이즈 제거)
-            val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-            val cleaned = Mat()
-            Imgproc.morphologyEx(binary, cleaned, Imgproc.MORPH_CLOSE, kernel)
-
-            // 4. 크기 조정 (OCR 정확도 향상)
+            // 3. 크기 조정을 먼저 하고 나서 이진화 (작은 원본 크기에서 바로 이진화하면
+            //    격자선/테두리 경계가 계단현상으로 부서져 노이즈가 심해짐)
             val resized = Mat()
             Imgproc.resize(
-                cleaned, resized,
+                masked, resized,
                 Size(TARGET_OCR_SIZE.toDouble(), TARGET_OCR_SIZE.toDouble()),
                 0.0, 0.0,
                 Imgproc.INTER_CUBIC
             )
 
+            // 4. 적응형 이진화 (글자를 선명하게). blockSize를 크게 잡아 글자 획
+            //    두께보다 넓은 영역에서 임계값을 계산해야 점 노이즈가 덜 생김
+            val binary = Mat()
+            Imgproc.adaptiveThreshold(
+                resized, binary,
+                255.0,
+                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+                Imgproc.THRESH_BINARY,
+                21, 8.0
+            )
+
+            // 5. 모폴로지 연산 (점 노이즈 제거 - OPEN이 CLOSE보다 노이즈 제거에 적합)
+            val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(2.0, 2.0))
+            val cleaned = Mat()
+            Imgproc.morphologyEx(binary, cleaned, Imgproc.MORPH_OPEN, kernel)
+
             // Mat -> Bitmap 변환
             val result = Bitmap.createBitmap(
-                resized.cols(), resized.rows(),
+                cleaned.cols(), cleaned.rows(),
                 Bitmap.Config.ARGB_8888
             )
-            Utils.matToBitmap(resized, result)
+            Utils.matToBitmap(cleaned, result)
 
             // 리소스 해제
             gray.release()
+            masked.release()
+            resized.release()
             binary.release()
             kernel.release()
             cleaned.release()
-            resized.release()
             mat.release()
 
             return result

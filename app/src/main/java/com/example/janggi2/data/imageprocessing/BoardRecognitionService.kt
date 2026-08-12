@@ -34,6 +34,9 @@ class BoardRecognitionService @Inject constructor(
     companion object {
         private const val TAG = "BoardRecognition"
         private const val USE_LINE_DETECTION = true  // 선 검출 사용 여부
+
+        // 앱에 번들된 0수(초기 배치) 기준 이미지 - 템플릿 매칭용 템플릿을 여기서 자동 추출합니다.
+        private const val REFERENCE_TEMPLATE_ASSET = "reference_board_initial.jpg"
     }
 
     /**
@@ -48,6 +51,12 @@ class BoardRecognitionService @Inject constructor(
     suspend fun extractText(imageUri: Uri): Result<ExtractedText> {
         return try {
             Log.d(TAG, "=== Board Recognition Started ===")
+
+            // 0. 기물 종류 템플릿이 없으면 번들된 0수 기준 이미지에서 자동 추출
+            //    (디버그 화면에서 수동으로 추출할 필요 없이 실제 앱 흐름에서 바로 동작하도록)
+            if (!pieceDetector.isTemplateInitialized()) {
+                initializeTemplatesFromBundledAsset()
+            }
 
             // 1. Load image
             val bitmap = loadAndDownsampleImage(imageUri)
@@ -80,6 +89,50 @@ class BoardRecognitionService @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Board recognition failed", e)
             Result.failure(Exception("기물 인식 실패: ${e.message}", e))
+        }
+    }
+
+    /**
+     * 앱에 번들된 0수 기준 이미지에서 기물 템플릿을 자동 추출합니다.
+     *
+     * 디버그 화면에서 사용자가 수동으로 "템플릿 추출" 버튼을 눌러야만 템플릿이
+     * 생겼던 문제를 해결하기 위해, 실제 인식 흐름(extractText) 최초 호출 시
+     * 앱에 미리 넣어둔 기준 이미지로 자동 추출을 시도합니다.
+     * 실패해도 조용히 넘어가고(템플릿 매칭은 건너뛰고 OCR로만 진행) 전체 흐름은 계속됩니다.
+     */
+    private suspend fun initializeTemplatesFromBundledAsset() {
+        try {
+            Log.d(TAG, "=== Auto Template Initialization from bundled asset ===")
+
+            val referenceBitmap = context.assets.open(REFERENCE_TEMPLATE_ASSET).use { input ->
+                BitmapFactory.decodeStream(input)
+            } ?: run {
+                Log.w(TAG, "Failed to decode bundled reference image: $REFERENCE_TEMPLATE_ASSET")
+                return
+            }
+
+            val boardRegion = boardDetector.detectBoard(referenceBitmap)
+                ?: boardDetector.estimateBoardRegion(referenceBitmap)
+
+            val detectedLines = lineDetector.detectLines(referenceBitmap, boardRegion)
+            if (detectedLines == null) {
+                Log.w(TAG, "Line detection failed on bundled reference image")
+                return
+            }
+
+            val grid = intersectionCalculator.calculateIntersections(detectedLines)
+            val count = pieceDetector.initializeTemplates(referenceBitmap, grid)
+
+            if (pieceDetector.isTemplateInitialized()) {
+                Log.i(TAG, "✅ Auto-initialized $count piece templates from bundled reference image")
+            } else {
+                Log.w(TAG, "⚠️ Template auto-initialization incomplete: $count types (14 needed)")
+            }
+        } catch (e: java.io.FileNotFoundException) {
+            Log.w(TAG, "Bundled reference image not found in assets: $REFERENCE_TEMPLATE_ASSET " +
+                    "(place a 0-move screenshot at app/src/main/assets/$REFERENCE_TEMPLATE_ASSET)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Auto template initialization failed", e)
         }
     }
 

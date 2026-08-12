@@ -4,11 +4,11 @@ import android.util.Log
 import com.example.janggi2.domain.model.Player
 import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.Rect
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 /**
  * 템플릿 매칭 기반 기물 인식기
@@ -22,14 +22,14 @@ class TemplateMatcher @Inject constructor() {
     companion object {
         private const val TAG = "TemplateMatcher"
 
-        // 매칭 임계값 (이 값 이상이면 매칭 성공)
-        private const val MATCH_THRESHOLD = 0.65
+        // 매칭 임계값 (IoU가 이 값 이상이면 매칭 성공)
+        private const val MATCH_THRESHOLD = 0.3
 
         // 최소 신뢰도 차이 (2위 후보와의 최소 차이)
         private const val MIN_CONFIDENCE_GAP = 0.05
 
-        // 템플릿 매칭 방법
-        private const val MATCH_METHOD = Imgproc.TM_CCOEFF_NORMED
+        // 슬라이딩 탐색 시 이동 간격 (픽셀). 작을수록 정밀하지만 느려짐
+        private const val SLIDE_STEP = 2
     }
 
     /**
@@ -122,59 +122,49 @@ class TemplateMatcher @Inject constructor() {
 
     /**
      * 단일 템플릿과 매칭
+     *
+     * 입력(더 큰 캔버스)과 템플릿(더 작은 캔버스)은 둘 다 [TemplateBinarizer]로
+     * 이진화되어 있습니다. 템플릿을 입력 안에서 몇 픽셀씩 이동시켜가며(슬라이딩)
+     * 가장 잘 겹치는 위치의 IoU(겹치는 획 픽셀 비율)를 점수로 사용합니다 —
+     * 크롭 시점의 미세한 정렬 오차를 흡수하기 위함입니다.
      */
-    private fun matchTemplate(inputMat: Mat, template: PieceTemplate): Double {
-        // 템플릿 크기에 맞게 입력 이미지 리사이즈
-        val resized = resizeToTemplate(inputMat, template.originalSize)
+    private fun matchTemplate(inputBinary: Mat, template: PieceTemplate): Double {
+        val templateBinary = template.templateMat
+        val maxDx = inputBinary.cols() - templateBinary.cols()
+        val maxDy = inputBinary.rows() - templateBinary.rows()
+        if (maxDx < 0 || maxDy < 0) return 0.0
 
-        // 템플릿 매칭 수행
-        val result = Mat()
-        Imgproc.matchTemplate(resized, template.templateMat, result, MATCH_METHOD)
+        var bestIoU = 0.0
+        var dy = 0
+        while (dy <= maxDy) {
+            var dx = 0
+            while (dx <= maxDx) {
+                val roi = Mat(inputBinary, Rect(dx, dy, templateBinary.cols(), templateBinary.rows()))
+                val intersection = Mat()
+                val union = Mat()
+                Core.bitwise_and(roi, templateBinary, intersection)
+                Core.bitwise_or(roi, templateBinary, union)
+                val unionCount = Core.countNonZero(union)
+                if (unionCount > 0) {
+                    val iou = Core.countNonZero(intersection).toDouble() / unionCount
+                    if (iou > bestIoU) bestIoU = iou
+                }
+                intersection.release()
+                union.release()
+                roi.release()
+                dx += SLIDE_STEP
+            }
+            dy += SLIDE_STEP
+        }
 
-        // 최대 매칭 점수 추출
-        val minMaxLoc = Core.minMaxLoc(result)
-        val maxScore = minMaxLoc.maxVal
-
-        resized.release()
-        result.release()
-
-        return maxScore
+        return bestIoU
     }
 
     /**
-     * 입력 이미지 전처리
+     * 입력 이미지 전처리 (이진화)
      */
     private fun preprocessInput(mat: Mat): Mat {
-        val result = Mat()
-
-        // 그레이스케일 변환
-        if (mat.channels() > 1) {
-            Imgproc.cvtColor(mat, result, Imgproc.COLOR_RGBA2GRAY)
-        } else {
-            mat.copyTo(result)
-        }
-
-        // 히스토그램 균등화
-        Imgproc.equalizeHist(result, result)
-
-        return result
-    }
-
-    /**
-     * 템플릿 크기에 맞게 리사이즈
-     */
-    private fun resizeToTemplate(mat: Mat, targetSize: Size): Mat {
-        val result = Mat()
-
-        // 크기가 같으면 복사만
-        if (abs(mat.cols() - targetSize.width) < 2 &&
-            abs(mat.rows() - targetSize.height) < 2) {
-            mat.copyTo(result)
-            return result
-        }
-
-        Imgproc.resize(mat, result, targetSize, 0.0, 0.0, Imgproc.INTER_LINEAR)
-        return result
+        return TemplateBinarizer.binarize(mat, TemplateBinarizer.INPUT_SIZE)
     }
 
     /**

@@ -772,7 +772,7 @@ private fun PieceVerificationDialog(
                         Spacer(modifier = Modifier.height(4.dp))
                         if (verification.detectedPiece != null) {
                             Text(
-                                text = "${verification.detectedPiece.player}: ${verification.detectedPiece.pieceType}",
+                                text = "${verification.detectedPiece.player}: ${verification.detectedPiece.pieceType.toKoreanLabel()}",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(

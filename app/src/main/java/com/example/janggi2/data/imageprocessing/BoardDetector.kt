@@ -178,7 +178,7 @@ class BoardDetector @Inject constructor() {
         val saturation = hsv[1]
         val value = hsv[2]
 
-        // 전통 장기판 색상 (갈색~노란색)
+ 2        // 전통 장기판 색상 (갈색~노란색)
         val isTraditionalBoard = hue in 15f..60f &&
                 saturation in 0.15f..0.9f &&
                 value in 0.3f..0.95f

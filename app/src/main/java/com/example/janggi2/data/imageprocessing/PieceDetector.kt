@@ -30,7 +30,8 @@ import kotlin.math.sqrt
 class PieceDetector @Inject constructor(
     private val templateExtractor: TemplateExtractor,
     private val templateMatcher: TemplateMatcher,
-    private val ocrRecognizer: PieceOcrRecognizer
+    private val ocrRecognizer: PieceOcrRecognizer,
+    private val pieceClassifier: PieceClassifier
 ) {
 
     companion object {
@@ -44,6 +45,20 @@ class PieceDetector @Inject constructor(
 
         // 교차점 주변에서 보드색이 아닌 픽셀의 비율이 이 값을 넘으면 기물이 있다고 판단
         private const val PIECE_FOREIGN_RATIO_THRESHOLD = 0.35f
+
+        // TEMP DEBUG: 크롭된 이미지를 눈으로 확인하기 위한 덤프 경로
+        private const val DEBUG_DUMP_DIR = "/sdcard/Android/data/com.example.janggi2/files/debug_crops"
+    }
+
+    /**
+     * TEMP DEBUG: 크롭 이미지를 파일로 저장 (실패해도 무시)
+     */
+    private fun dumpDebugCrop(name: String, mat: Mat) {
+        try {
+            org.opencv.imgcodecs.Imgcodecs.imwrite("$DEBUG_DUMP_DIR/$name.png", mat)
+        } catch (e: Exception) {
+            Log.w(TAG, "debug dump failed: $name", e)
+        }
     }
 
     // 템플릿 저장소
@@ -70,8 +85,9 @@ class PieceDetector @Inject constructor(
         // 기존 템플릿 정리
         pieceTemplates?.clear()
 
-        // 새 템플릿 추출
-        val templates = templateExtractor.extractTemplates(bitmap, grid)
+        // 새 템플릿 추출 (보드 배경색 기준으로 기물 모양만 타이트하게 크롭)
+        val boardColor = estimateBoardBackgroundColor(bitmap, grid)
+        val templates = templateExtractor.extractTemplates(bitmap, grid, boardColor)
         pieceTemplates = templates
 
         val count = templates.size()
@@ -123,7 +139,18 @@ class PieceDetector @Inject constructor(
     }
 
     enum class PieceType {
-        GENERAL, GUARD, HORSE, ELEPHANT, CHARIOT, CANNON, SOLDIER, UNKNOWN
+        GENERAL, GUARD, HORSE, ELEPHANT, CHARIOT, CANNON, SOLDIER, UNKNOWN;
+
+        fun toKoreanLabel(): String = when (this) {
+            GENERAL -> "왕"
+            GUARD -> "사"
+            HORSE -> "마"
+            ELEPHANT -> "상"
+            CHARIOT -> "차"
+            CANNON -> "포"
+            SOLDIER -> "졸"
+            UNKNOWN -> "미확인"
+        }
     }
 
     enum class DominantColor {
@@ -146,6 +173,8 @@ class PieceDetector @Inject constructor(
         val ocrText: String,                  // OCR이 읽은 문자
         val ocrConfidence: Float,             // OCR 신뢰도
         val ocrPieceType: PieceType?,         // OCR로 판별된 기물 종류
+        val templatePieceType: PieceType?,    // 템플릿 매칭으로 판별된 기물 종류
+        val templateMatchScore: Double,       // 템플릿 매칭 최고 점수
         val analysisReason: String            // 분석 이유 문자열
     ) {
         companion object {
@@ -161,7 +190,10 @@ class PieceDetector @Inject constructor(
                 totalColored: Int,
                 ocrText: String = "",
                 ocrConfidence: Float = 0f,
-                ocrPieceType: PieceType? = null
+                ocrPieceType: PieceType? = null,
+                templatePieceType: PieceType? = null,
+                templateMatchScore: Double = 0.0,
+                templatesAvailable: Boolean = false
             ): PieceAnalysisDetails {
                 val redRatio = if (totalColored > 0) redCount.toFloat() / totalColored else 0f
                 val blueRatio = if (totalColored > 0) blueCount.toFloat() / totalColored else 0f
@@ -182,8 +214,14 @@ class PieceDetector @Inject constructor(
                         } else {
                             append("\n색상 픽셀 부족: $totalColored (최소 5 필요)")
                         }
+                        append("\n템플릿 매칭: ")
+                        append(
+                            if (!templatesAvailable) "(템플릿 미추출)"
+                            else if (templatePieceType != null) "${templatePieceType.toKoreanLabel()} (점수: ${String.format("%.2f", templateMatchScore)})"
+                            else "매칭 실패 (점수: ${String.format("%.2f", templateMatchScore)})"
+                        )
                         append("\nOCR 인식: ${if (ocrText.isNotBlank()) "'$ocrText'" else "(문자 없음)"} " +
-                                "(${(ocrConfidence * 100).toInt()}%) -> ${ocrPieceType?.name ?: "판별 실패"}")
+                                "(${(ocrConfidence * 100).toInt()}%) -> ${ocrPieceType?.toKoreanLabel() ?: "판별 실패"}")
                     }
                 }
 
@@ -200,6 +238,8 @@ class PieceDetector @Inject constructor(
                     ocrText = ocrText,
                     ocrConfidence = ocrConfidence,
                     ocrPieceType = ocrPieceType,
+                    templatePieceType = templatePieceType,
+                    templateMatchScore = templateMatchScore,
                     analysisReason = reason
                 )
             }
@@ -321,30 +361,53 @@ class PieceDetector @Inject constructor(
 
             // 3. 진영 결정
             val player = when (colorAnalysis.dominantColor) {
-                DominantColor.RED -> Player.CHO
-                DominantColor.BLUE, DominantColor.GREEN -> Player.HAN
+                DominantColor.BLUE, DominantColor.GREEN -> Player.CHO
+                DominantColor.RED -> Player.HAN
                 DominantColor.EMPTY -> return null
             }
 
-            // 4. OCR로 기물 종류 인식 (기물 위 글자를 직접 읽어 판별, 우선순위 1)
+            // 4. CNN 분류기로 기물 종류 인식 (학습된 진영별 7-클래스 모델, 우선순위 1 —
+            //    지금까지 시도한 방법 중 실측 정확도가 가장 높음)
             var pieceType = PieceType.UNKNOWN
             var matchConfidence = 0f
 
-            val ocrResult = ocrRecognizer.recognizePiece(bitmap, centerX, centerY, radius)
-            if (ocrResult.pieceType != null) {
-                pieceType = ocrResult.pieceType
-                matchConfidence = ocrResult.confidence
-                Log.v(TAG, "OCR match at ${intersection.position}: $pieceType " +
-                        "('${ocrResult.recognizedText}', confidence: ${String.format("%.2f", ocrResult.confidence)})")
+            val classifierResult = run {
+                val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius, boardColor)
+                    ?: return@run null
+                try {
+                    pieceClassifier.classify(croppedMat, player)
+                } finally {
+                    croppedMat.release()
+                }
+            }
+            if (classifierResult != null) {
+                pieceType = classifierResult.pieceType
+                matchConfidence = classifierResult.confidence
+                Log.v(TAG, "Classifier match at ${intersection.position}: $pieceType " +
+                        "(confidence: ${String.format("%.2f", classifierResult.confidence)})")
             }
 
-            // 5. OCR 실패 시 템플릿 매칭으로 폴백 (0수 템플릿이 추출된 경우에만)
+            // 5. 분류기 실패 시(모델 로드 실패 등) OCR로 폴백
+            if (pieceType == PieceType.UNKNOWN) {
+                val ocrResult = ocrRecognizer.recognizePiece(bitmap, centerX, centerY, radius)
+                if (ocrResult.pieceType != null) {
+                    pieceType = ocrResult.pieceType
+                    matchConfidence = ocrResult.confidence
+                    Log.v(TAG, "OCR match at ${intersection.position}: $pieceType " +
+                            "('${ocrResult.recognizedText}', confidence: ${String.format("%.2f", ocrResult.confidence)})")
+                }
+            }
+
+            // 6. 그래도 실패 시 템플릿 매칭으로 폴백 (0수 템플릿이 추출된 경우에만)
             if (pieceType == PieceType.UNKNOWN) {
                 val templates = pieceTemplates
                 if (templates != null && templates.isInitialized()) {
-                    val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius)
+                    val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius, boardColor)
                     if (croppedMat != null) {
                         try {
+                            // TEMP DEBUG: 실제 매칭에 쓰인 입력 크롭 확인용
+                            dumpDebugCrop("match_${player}_r${intersection.position.row}c${intersection.position.col}", croppedMat)
+
                             val matchResult = templateMatcher.matchPiece(croppedMat, templates, player)
                             if (matchResult != null) {
                                 pieceType = matchResult.pieceType
@@ -382,18 +445,32 @@ class PieceDetector @Inject constructor(
 
     /**
      * 기물 영역을 크롭하여 Mat으로 반환
+     *
+     * 교차점 좌표를 그대로 신뢰하지 않고, 보드 배경색과 다른(=기물로 추정되는)
+     * 픽셀들의 무게중심/경계에 맞춰 타이트하게 크롭합니다. 템플릿 추출
+     * ([TemplateExtractor])과 동일한 기준이라 매칭 시 템플릿-입력 간 구도가
+     * 일관됩니다.
      */
     private fun cropPieceRegion(
         bitmap: Bitmap,
         centerX: Int,
         centerY: Int,
-        radius: Int
+        radius: Int,
+        boardColor: IntArray
     ): Mat? {
-        val cropRadius = (radius * 0.9f).toInt()
-        val left = max(0, centerX - cropRadius)
-        val top = max(0, centerY - cropRadius)
-        val right = min(bitmap.width, centerX + cropRadius)
-        val bottom = min(bitmap.height, centerY + cropRadius)
+        val nominalRadius = (radius * 0.9f).toInt()
+        val searchRadius = (radius * 1.3f).toInt()
+
+        val bounds = refinePieceBounds(bitmap, centerX, centerY, searchRadius, boardColor)
+        val refinedX = bounds?.centerX ?: centerX
+        val refinedY = bounds?.centerY ?: centerY
+        val cropRadius = ((bounds?.radius ?: nominalRadius) * 1.15f).toInt()
+            .coerceIn(nominalRadius / 2, searchRadius)
+
+        val left = max(0, refinedX - cropRadius)
+        val top = max(0, refinedY - cropRadius)
+        val right = min(bitmap.width, refinedX + cropRadius)
+        val bottom = min(bitmap.height, refinedY + cropRadius)
 
         if (right <= left || bottom <= top) {
             return null
@@ -410,6 +487,68 @@ class PieceDetector @Inject constructor(
         croppedBitmap.recycle()
 
         return mat
+    }
+
+    /**
+     * 기물 경계 추정 결과 (중심 좌표 + 반경)
+     */
+    private data class PieceBounds(val centerX: Int, val centerY: Int, val radius: Int)
+
+    /**
+     * 탐색 영역 내에서 보드 배경색과 다른 픽셀들의 무게중심/경계를 계산합니다.
+     */
+    private fun refinePieceBounds(
+        bitmap: Bitmap,
+        nominalX: Int,
+        nominalY: Int,
+        searchRadius: Int,
+        boardColor: IntArray
+    ): PieceBounds? {
+        val left = max(0, nominalX - searchRadius)
+        val top = max(0, nominalY - searchRadius)
+        val right = min(bitmap.width, nominalX + searchRadius)
+        val bottom = min(bitmap.height, nominalY + searchRadius)
+
+        val boardR = boardColor[0]
+        val boardG = boardColor[1]
+        val boardB = boardColor[2]
+
+        var sumX = 0L
+        var sumY = 0L
+        var count = 0
+        var minX = right
+        var maxX = left
+        var minY = bottom
+        var maxY = top
+
+        val step = max(1, searchRadius / 25)
+
+        for (y in top until bottom step step) {
+            for (x in left until right step step) {
+                val pixel = bitmap.getPixel(x, y)
+                val dr = Color.red(pixel) - boardR
+                val dg = Color.green(pixel) - boardG
+                val db = Color.blue(pixel) - boardB
+                val distance = sqrt((dr * dr + dg * dg + db * db).toDouble())
+
+                if (distance > BOARD_COLOR_DISTANCE_THRESHOLD) {
+                    sumX += x
+                    sumY += y
+                    count++
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+
+        if (count < 20) return null
+
+        val centerX = (sumX / count).toInt()
+        val centerY = (sumY / count).toInt()
+        val radius = max(maxX - minX, maxY - minY) / 2
+        return PieceBounds(centerX, centerY, radius)
     }
 
     /**
@@ -467,7 +606,30 @@ class PieceDetector @Inject constructor(
             // 2. 기물 색상 분석 (테두리 색상으로 진영 판별)
             val colorAnalysis = analyzeKakaoPieceColor(bitmap, centerX, centerY, radius)
 
-            // 3. OCR 분석 (디버깅용: 실제로 어떤 글자를 읽었는지 확인)
+            val player = when (colorAnalysis.dominantColor) {
+                DominantColor.BLUE, DominantColor.GREEN -> Player.CHO
+                DominantColor.RED -> Player.HAN
+                DominantColor.EMPTY -> null
+            }
+
+            // 3. 템플릿 매칭 분석 (디버깅용: 어떤 종류로, 어느 점수로 매칭됐는지 확인)
+            var templatePieceType: PieceType? = null
+            var templateMatchScore = 0.0
+            val templatesAvailable = pieceTemplates?.isInitialized() == true
+            if (templatesAvailable && player != null) {
+                val croppedMat = cropPieceRegion(bitmap, centerX, centerY, radius, boardColor)
+                if (croppedMat != null) {
+                    try {
+                        val matchResult = templateMatcher.matchPiece(croppedMat, pieceTemplates!!, player)
+                        templatePieceType = matchResult?.pieceType
+                        templateMatchScore = matchResult?.matchScore ?: 0.0
+                    } finally {
+                        croppedMat.release()
+                    }
+                }
+            }
+
+            // 4. OCR 분석 (디버깅용: 실제로 어떤 글자를 읽었는지 확인)
             val ocrResult = ocrRecognizer.recognizePiece(bitmap, centerX, centerY, radius)
 
             return PieceAnalysisDetails.create(
@@ -482,7 +644,10 @@ class PieceDetector @Inject constructor(
                 totalColored = colorAnalysis.totalColored,
                 ocrText = ocrResult.recognizedText,
                 ocrConfidence = ocrResult.confidence,
-                ocrPieceType = ocrResult.pieceType
+                ocrPieceType = ocrResult.pieceType,
+                templatePieceType = templatePieceType,
+                templateMatchScore = templateMatchScore,
+                templatesAvailable = templatesAvailable
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to analyze intersection details at ${intersection.position}", e)

@@ -100,6 +100,9 @@ dependencies {
     // OpenCV for circle detection
     implementation(libs.opencv)
 
+    // TFLite for on-device piece-type classification
+    implementation(libs.tensorflow.lite)
+
     // Coil for image loading
     implementation(libs.coil.compose)
 

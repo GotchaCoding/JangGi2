@@ -95,7 +95,7 @@ class LineDetector @Inject constructor() {
         mat: Mat
     ): DetectedLines {
         // 4. 선분에서 세로선/가로선 분류
-        val (rawVertical, rawHorizontal) = classifyLineSegments(lineSegments, width, height)
+        val (rawVertical, rawHorizontal, verticalSegments) = classifyLineSegments(lineSegments, width, height)
         Log.d(TAG, "Classified: ${rawVertical.size} vertical, ${rawHorizontal.size} horizontal")
 
         // 5. 클러스터링으로 대표선 추출
@@ -114,12 +114,18 @@ class LineDetector @Inject constructor() {
         }
         val expectedBoardHeight = boardWidth * 10f / 9f  // 장기판 비율 9:10
 
+        // 7b. 세로선 자체의 세로 범위(y)로 보드 상하단 추정
+        //     세로선은 보드를 온전히 가로지르므로, 헤더/하단 UI 등 보드 밖 요소에
+        //     흔들리지 않는 훨씬 안정적인 기준입니다.
+        val verticalYRange = estimateBoardYRangeFromVerticals(verticalSegments)
+
         // 8. 장기판 범위 내의 가로선만 필터링
         val filteredHorizontal = filterHorizontalLinesInBoard(
             clusteredHorizontal,
             finalVertical,
             expectedBoardHeight,
-            height
+            height,
+            verticalYRange
         )
         Log.d(TAG, "Filtered horizontal: ${clusteredHorizontal.size} -> ${filteredHorizontal.size}")
 
@@ -270,15 +276,21 @@ class LineDetector @Inject constructor() {
     }
 
     /**
+     * 세로선 선분의 X 위치와 Y 범위(어디서부터 어디까지 뻗어있는지)
+     */
+    private data class VerticalSegment(val avgX: Float, val minY: Float, val maxY: Float, val length: Double)
+
+    /**
      * 선분을 세로선/가로선으로 분류
      */
     private fun classifyLineSegments(
         lineSegments: List<DoubleArray>,
         width: Int,
         height: Int
-    ): Pair<MutableList<Float>, MutableList<Float>> {
+    ): Triple<MutableList<Float>, MutableList<Float>, List<VerticalSegment>> {
         val verticalXs = mutableListOf<Float>()
         val horizontalYs = mutableListOf<Float>()
+        val verticalSegments = mutableListOf<VerticalSegment>()
 
         for (segment in lineSegments) {
             val x1 = segment[0]
@@ -299,6 +311,9 @@ class LineDetector @Inject constructor() {
                 val avgX = ((x1 + x2) / 2).toFloat()
                 if (avgX in 0f..width.toFloat()) {
                     verticalXs.add(avgX)
+                    verticalSegments.add(
+                        VerticalSegment(avgX, min(y1, y2).toFloat(), max(y1, y2).toFloat(), length)
+                    )
                     Log.v(TAG, "Vertical line at x=$avgX (dy=$dy, dx=$dx)")
                 }
             }
@@ -312,7 +327,31 @@ class LineDetector @Inject constructor() {
             }
         }
 
-        return Pair(verticalXs, horizontalYs)
+        return Triple(verticalXs, horizontalYs, verticalSegments)
+    }
+
+    /**
+     * 세로선 선분들의 Y 범위로 보드 상하단을 추정합니다.
+     *
+     * 세로선은 보드를 위에서 아래까지 온전히 가로지르므로, 헤더/하단 UI 등
+     * 보드 밖에서 검출된 가로선 노이즈에 흔들리지 않는 안정적인 기준입니다.
+     * 짧은(=보드 밖 UI 요소일 가능성이 높은) 세로선은 제외하고, 충분히 긴
+     * 세로선들의 상단/하단 Y좌표 중앙값을 사용합니다.
+     */
+    private fun estimateBoardYRangeFromVerticals(segments: List<VerticalSegment>): Pair<Float, Float>? {
+        if (segments.isEmpty()) return null
+
+        val maxLength = segments.maxOf { it.length }
+        val longSegments = segments.filter { it.length >= maxLength * 0.6 }
+        if (longSegments.isEmpty()) return null
+
+        val tops = longSegments.map { it.minY }.sorted()
+        val bottoms = longSegments.map { it.maxY }.sorted()
+        val top = tops[tops.size / 2]
+        val bottom = bottoms[bottoms.size / 2]
+
+        Log.d(TAG, "Board Y range from ${longSegments.size} long vertical segments: $top ~ $bottom")
+        return Pair(top, bottom)
     }
 
     /**
@@ -356,22 +395,25 @@ class LineDetector @Inject constructor() {
         horizontalLines: List<Float>,
         verticalLines: List<Float>,
         expectedBoardHeight: Float,
-        imageHeight: Int
+        imageHeight: Int,
+        verticalYRange: Pair<Float, Float>?
     ): List<Float> {
         if (horizontalLines.isEmpty() || verticalLines.size < 2) {
             return horizontalLines
         }
 
-        // 가로선들의 중심을 찾아 장기판 중심 추정
-        val sortedH = horizontalLines.sorted()
-        val hCenter = (sortedH.first() + sortedH.last()) / 2
+        val (boardTop, boardBottom) = if (verticalYRange != null) {
+            verticalYRange
+        } else {
+            // 폴백: 세로선 Y범위를 못 구했을 때만 가로선 min/max 중심으로 추정
+            // (헤더/하단 UI 등 보드 밖 노이즈에 취약하므로 최후의 수단)
+            val sortedH = horizontalLines.sorted()
+            val hCenter = (sortedH.first() + sortedH.last()) / 2
+            val halfHeight = expectedBoardHeight / 2
+            Pair(hCenter - halfHeight, hCenter + halfHeight)
+        }
 
-        // 장기판 상하 경계 계산
-        val halfHeight = expectedBoardHeight / 2
-        val boardTop = hCenter - halfHeight
-        val boardBottom = hCenter + halfHeight
-
-        Log.d(TAG, "Board Y range: $boardTop ~ $boardBottom (center=$hCenter, height=$expectedBoardHeight)")
+        Log.d(TAG, "Board Y range: $boardTop ~ $boardBottom (height=$expectedBoardHeight)")
 
         // 마진 10% 추가하여 필터링
         val margin = expectedBoardHeight * 0.1f
