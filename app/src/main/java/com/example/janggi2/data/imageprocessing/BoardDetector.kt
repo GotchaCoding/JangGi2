@@ -7,6 +7,7 @@ import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.Scalar
+import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -180,6 +181,14 @@ class BoardDetector @Inject constructor() {
         Core.bitwise_or(mask, green, mask)
         green.release()
         hsv.release()
+
+        // 판의 격자선이 나무 영역을 잘라놓기 때문에, 닫기 연산으로 선 두께만큼
+        // 메워서 판이 하나의 덩어리가 되게 합니다. 이걸 빼면 판이 세로로 두
+        // 덩어리로 쪼개져 큰 쪽만 잡히고, 가로세로비 검사에서 탈락해 화면 중앙을
+        // 추정하는 폴백으로 넘어갑니다.
+        val bridge = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, Size(9.0, 9.0))
+        Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, bridge)
+        bridge.release()
 
         val labels = Mat()
         val stats = Mat()
