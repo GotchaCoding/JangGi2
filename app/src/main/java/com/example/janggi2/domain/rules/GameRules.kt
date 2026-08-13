@@ -63,6 +63,16 @@ class GameRules {
         val currentPlayer = gameState.currentPlayer
         val opponent = currentPlayer.opponent()
 
+        // 궁이 잡히면 그대로 끝납니다. 합법 수 필터가 자기 궁을 잡히게 두지 않으므로
+        // 정상 대국에서는 나오지 않지만, 사진에서 불러온 판처럼 궁이 빠진 상태로
+        // 시작하는 경우를 위해 먼저 확인합니다.
+        if (gameState.getGeneral(currentPlayer) == null) {
+            return gameState.withStatus(GameStatus.CHECKMATE, newWinner = opponent)
+        }
+        if (gameState.getGeneral(opponent) == null) {
+            return gameState.withStatus(GameStatus.CHECKMATE, newWinner = currentPlayer)
+        }
+
         // Check for bikjang (facing generals)
         if (checkDetector.isBikjang(gameState)) {
             // The player who just moved created bikjang and loses

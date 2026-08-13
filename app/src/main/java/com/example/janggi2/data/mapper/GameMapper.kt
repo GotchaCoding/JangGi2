@@ -125,7 +125,9 @@ class GameMapper {
                 toCol = move.to.col,
                 toRow = move.to.row,
                 capturedPieceType = move.capturedPiece?.let { getPieceType(it) },
-                capturedPiecePlayer = move.capturedPiece?.player?.name
+                capturedPiecePlayer = move.capturedPiece?.player?.name,
+                movedPieceType = move.movedPiece?.let { getPieceType(it) },
+                movedPiecePlayer = move.movedPiece?.player?.name
             )
         }
         return json.encodeToString(serializableMoves)
@@ -145,7 +147,12 @@ class GameMapper {
                 } else {
                     null
                 }
-                Move(from = from, to = to, capturedPiece = capturedPiece)
+                val movedPiece = if (sm.movedPieceType != null && sm.movedPiecePlayer != null) {
+                    createPiece(sm.movedPieceType, Player.valueOf(sm.movedPiecePlayer), to)
+                } else {
+                    null
+                }
+                Move(from = from, to = to, capturedPiece = capturedPiece, movedPiece = movedPiece)
             }
         } catch (e: Exception) {
             // Log error and return empty list if JSON is corrupted
@@ -176,5 +183,8 @@ private data class SerializableMove(
     val toCol: Int,
     val toRow: Int,
     val capturedPieceType: String?,
-    val capturedPiecePlayer: String?
+    val capturedPiecePlayer: String?,
+    // 나중에 추가된 항목이라 예전 저장 데이터에는 없습니다. 기본값이 있어야 읽힙니다.
+    val movedPieceType: String? = null,
+    val movedPiecePlayer: String? = null
 )

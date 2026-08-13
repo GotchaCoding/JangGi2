@@ -87,7 +87,7 @@ class NotationConverter @Inject constructor() {
         val (fromUci, toUci) = splitUciMove(uciMove)
         val from = uciToPosition(fromUci)
         val to = uciToPosition(toUci)
-        return Move(from, to, gameState.getPieceAt(to))
+        return Move(from, to, gameState.getPieceAt(to), gameState.getPieceAt(from))
     }
 
     /**

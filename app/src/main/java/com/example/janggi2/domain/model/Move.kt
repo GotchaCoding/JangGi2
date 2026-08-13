@@ -7,7 +7,9 @@ package com.example.janggi2.domain.model
 data class Move(
     val from: Position,
     val to: Position,
-    val capturedPiece: Piece? = null
+    val capturedPiece: Piece? = null,
+    /** 이 수를 둔 기물. 수 기록 표시에 씁니다. 예전에 저장된 대국에는 없을 수 있습니다. */
+    val movedPiece: Piece? = null
 ) {
     /**
      * Returns true if this move results in a capture.

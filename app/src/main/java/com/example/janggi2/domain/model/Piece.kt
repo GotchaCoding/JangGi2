@@ -105,14 +105,5 @@ sealed class Piece(
     ) : Piece(owner, pos) {
         override fun getDisplayChar(): String = if (owner == Player.CHO) "졸" else "병"
         override fun moveTo(newPosition: Position) = copy(pos = newPosition)
-
-        /**
-         * Checks if this soldier has crossed the river.
-         * River is between rows 4 and 5.
-         */
-        fun hasCrossedRiver(): Boolean = when (owner) {
-            Player.CHO -> pos.row >= 5
-            Player.HAN -> pos.row <= 4
-        }
     }
 }

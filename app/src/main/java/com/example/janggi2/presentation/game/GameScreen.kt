@@ -30,6 +30,7 @@ import com.example.janggi2.presentation.game.components.AiSettingsDialog
 import com.example.janggi2.presentation.game.components.GameControls
 import com.example.janggi2.presentation.game.components.HighlightLayer
 import com.example.janggi2.presentation.game.components.JangGiBoard
+import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
 import com.example.janggi2.presentation.game.components.PieceView
 import com.example.janggi2.presentation.game.components.ReplayControls
@@ -105,6 +106,12 @@ fun GameScreen(
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(16.dp)
+            )
+
+            // 수 기록
+            MoveHistoryPanel(
+                moves = uiState.gameState.moveHistory,
+                modifier = Modifier.padding(bottom = 4.dp)
             )
 
             // Game controls or replay controls

@@ -185,7 +185,8 @@ class GameViewModel @Inject constructor(
         val move = Move(
             from = piece.position,
             to = destination,
-            capturedPiece = gameStateWithUndo.getPieceAt(destination)
+            capturedPiece = gameStateWithUndo.getPieceAt(destination),
+            movedPiece = piece
         )
 
         // Apply the move with rule checking
