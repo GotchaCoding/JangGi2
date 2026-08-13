@@ -204,31 +204,24 @@ class TemplateExtractor @Inject constructor() {
     /**
      * 교차점에서 기물 영역 크롭
      *
-     * 그리드 좌표를 그대로 신뢰하지 않고, 그 주변 탐색 영역에서 보드 배경색과
-     * 다른(=기물로 추정되는) 픽셀들의 무게중심과 경계를 직접 찾아 그 모양에
-     * 맞춰 타이트하게 크롭합니다. 그리드 좌표가 한두 픽셀 어긋나도 실제 기물
-     * 중심으로 자동 보정되고, 템플릿에 보드 배경이 섞여 들어가지 않습니다.
+     * 기물은 교차점 위에 놓이므로 교차점을 그대로 중심으로 쓰고, 크기도
+     * [TemplateBinarizer.CROP_RADIUS_IN_CELLS]로 고정합니다. 주변 픽셀의
+     * 무게중심으로 재보정하면 인접 칸의 기물까지 평균에 섞여 중심이 두 기물
+     * 사이로 밀리므로 쓰지 않습니다. [PieceDetector]의 추론 크롭과 같은 규격이라
+     * 템플릿과 입력의 구도가 일치합니다.
      */
     private fun cropPieceRegion(
         srcMat: Mat,
-        bitmap: Bitmap,
+        @Suppress("UNUSED_PARAMETER") bitmap: Bitmap,
         intersection: IntersectionCalculator.BoardIntersection,
         grid: IntersectionCalculator.IntersectionGrid,
-        boardColor: IntArray
+        @Suppress("UNUSED_PARAMETER") boardColor: IntArray
     ): Mat? {
-        val nominalX = intersection.pixelX.toInt()
-        val nominalY = intersection.pixelY.toInt()
+        val centerX = intersection.pixelX.toInt()
+        val centerY = intersection.pixelY.toInt()
 
-        val cellWidth = grid.averageCellWidth
-        val cellHeight = grid.averageCellHeight
-        val nominalRadius = (minOf(cellWidth, cellHeight) * 0.45f).toInt()
-        val searchRadius = (minOf(cellWidth, cellHeight) * 0.65f).toInt()
-
-        val bounds = refinePieceBounds(bitmap, nominalX, nominalY, searchRadius, boardColor)
-        val centerX = bounds?.centerX ?: nominalX
-        val centerY = bounds?.centerY ?: nominalY
-        val cropRadius = ((bounds?.radius ?: nominalRadius) * 1.15f).toInt()
-            .coerceIn(nominalRadius / 2, searchRadius)
+        val cell = minOf(grid.averageCellWidth, grid.averageCellHeight)
+        val cropRadius = (cell * TemplateBinarizer.CROP_RADIUS_IN_CELLS).toInt()
 
         // 경계 체크
         val left = max(0, centerX - cropRadius)
@@ -242,69 +235,6 @@ class TemplateExtractor @Inject constructor() {
 
         val rect = Rect(left, top, right - left, bottom - top)
         return Mat(srcMat, rect)
-    }
-
-    /**
-     * 기물 경계 추정 결과 (중심 좌표 + 반경)
-     */
-    private data class PieceBounds(val centerX: Int, val centerY: Int, val radius: Int)
-
-    /**
-     * 탐색 영역 내에서 보드 배경색과 다른 픽셀들의 무게중심/경계를 계산합니다.
-     * 일치하는 픽셀이 너무 적으면(기물이 없거나 탐지 실패) null을 반환합니다.
-     */
-    private fun refinePieceBounds(
-        bitmap: Bitmap,
-        nominalX: Int,
-        nominalY: Int,
-        searchRadius: Int,
-        boardColor: IntArray
-    ): PieceBounds? {
-        val left = max(0, nominalX - searchRadius)
-        val top = max(0, nominalY - searchRadius)
-        val right = min(bitmap.width, nominalX + searchRadius)
-        val bottom = min(bitmap.height, nominalY + searchRadius)
-
-        val boardR = boardColor[0]
-        val boardG = boardColor[1]
-        val boardB = boardColor[2]
-
-        var sumX = 0L
-        var sumY = 0L
-        var count = 0
-        var minX = right
-        var maxX = left
-        var minY = bottom
-        var maxY = top
-
-        val step = max(1, searchRadius / 25)
-
-        for (y in top until bottom step step) {
-            for (x in left until right step step) {
-                val pixel = bitmap.getPixel(x, y)
-                val dr = Color.red(pixel) - boardR
-                val dg = Color.green(pixel) - boardG
-                val db = Color.blue(pixel) - boardB
-                val distance = sqrt((dr * dr + dg * dg + db * db).toDouble())
-
-                if (distance > BOARD_COLOR_DISTANCE_THRESHOLD) {
-                    sumX += x
-                    sumY += y
-                    count++
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-            }
-        }
-
-        if (count < 20) return null
-
-        val centerX = (sumX / count).toInt()
-        val centerY = (sumY / count).toInt()
-        val radius = max(maxX - minX, maxY - minY) / 2
-        return PieceBounds(centerX, centerY, radius)
     }
 
     /**

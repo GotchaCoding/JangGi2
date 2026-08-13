@@ -22,6 +22,20 @@ object TemplateBinarizer {
     // 매칭 입력 크기 (템플릿보다 크게 잡아 슬라이딩 탐색으로 정렬 오차를 흡수할 여지를 둠)
     const val INPUT_SIZE = 130
 
+    /**
+     * 크롭·마스크 기하 규격. 학습 데이터 생성(파이썬)과 추론(여기)이 반드시 같은
+     * 값을 써야 하므로 한곳에 모아둡니다. 셀 크기를 1로 봤을 때:
+     *
+     *  - 기물 팔각형의 반지름은 변 기준 0.42, 꼭짓점 기준 0.48
+     *  - 이웃 기물의 가장 가까운 가장자리는 1 - 0.48 = 0.52
+     *
+     * 따라서 마스크 반지름 0.45면 기물 전체를 담으면서 이웃은 물지 않습니다.
+     */
+    const val CELL_RADIUS_RATIO = 0.35f      // IntersectionCalculator 의 cellRadius = 0.35 * cell
+    const val CROP_RADIUS_IN_CELLS = 0.55f   // 크롭 한 변 = 1.10 * cell
+    private const val MASK_RADIUS_IN_CELLS = 0.45f
+    private const val MASK_RATIO = MASK_RADIUS_IN_CELLS / (2 * CROP_RADIUS_IN_CELLS)
+
     fun binarize(mat: Mat, targetSize: Int): Mat {
         val gray = Mat()
         if (mat.channels() > 1) {
@@ -36,7 +50,7 @@ object TemplateBinarizer {
         Imgproc.circle(
             circleMask,
             Point(gray.cols() / 2.0, gray.rows() / 2.0),
-            (min(gray.cols(), gray.rows()) * 0.30).toInt(),
+            (min(gray.cols(), gray.rows()) * MASK_RATIO).toInt(),
             Scalar(255.0),
             -1
         )

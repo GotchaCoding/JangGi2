@@ -446,31 +446,28 @@ class PieceDetector @Inject constructor(
     /**
      * 기물 영역을 크롭하여 Mat으로 반환
      *
-     * 교차점 좌표를 그대로 신뢰하지 않고, 보드 배경색과 다른(=기물로 추정되는)
-     * 픽셀들의 무게중심/경계에 맞춰 타이트하게 크롭합니다. 템플릿 추출
-     * ([TemplateExtractor])과 동일한 기준이라 매칭 시 템플릿-입력 간 구도가
-     * 일관됩니다.
+     * 기물은 항상 격자 교차점 위에 놓이므로 교차점을 그대로 크롭 중심으로 씁니다.
+     * 보드색과 다른 픽셀의 무게중심으로 재보정하지 않는 이유는, 인접 칸에 기물이
+     * 있으면 그 픽셀까지 평균에 섞여 중심이 두 기물 사이로 끌려가기 때문입니다.
+     * 크롭 크기도 [TemplateBinarizer.CROP_RADIUS_IN_CELLS]로 고정해서 배율이
+     * 흔들리지 않게 합니다 — 학습 데이터와 추론 입력이 같은 구도여야 분류기가
+     * 제대로 동작합니다.
      */
     private fun cropPieceRegion(
         bitmap: Bitmap,
         centerX: Int,
         centerY: Int,
         radius: Int,
-        boardColor: IntArray
+        @Suppress("UNUSED_PARAMETER") boardColor: IntArray
     ): Mat? {
-        val nominalRadius = (radius * 0.9f).toInt()
-        val searchRadius = (radius * 1.3f).toInt()
+        // radius 는 셀 크기의 CELL_RADIUS_RATIO 배 (IntersectionCalculator 기준)
+        val cell = radius / TemplateBinarizer.CELL_RADIUS_RATIO
+        val cropRadius = (cell * TemplateBinarizer.CROP_RADIUS_IN_CELLS).toInt()
 
-        val bounds = refinePieceBounds(bitmap, centerX, centerY, searchRadius, boardColor)
-        val refinedX = bounds?.centerX ?: centerX
-        val refinedY = bounds?.centerY ?: centerY
-        val cropRadius = ((bounds?.radius ?: nominalRadius) * 1.15f).toInt()
-            .coerceIn(nominalRadius / 2, searchRadius)
-
-        val left = max(0, refinedX - cropRadius)
-        val top = max(0, refinedY - cropRadius)
-        val right = min(bitmap.width, refinedX + cropRadius)
-        val bottom = min(bitmap.height, refinedY + cropRadius)
+        val left = max(0, centerX - cropRadius)
+        val top = max(0, centerY - cropRadius)
+        val right = min(bitmap.width, centerX + cropRadius)
+        val bottom = min(bitmap.height, centerY + cropRadius)
 
         if (right <= left || bottom <= top) {
             return null
@@ -487,68 +484,6 @@ class PieceDetector @Inject constructor(
         croppedBitmap.recycle()
 
         return mat
-    }
-
-    /**
-     * 기물 경계 추정 결과 (중심 좌표 + 반경)
-     */
-    private data class PieceBounds(val centerX: Int, val centerY: Int, val radius: Int)
-
-    /**
-     * 탐색 영역 내에서 보드 배경색과 다른 픽셀들의 무게중심/경계를 계산합니다.
-     */
-    private fun refinePieceBounds(
-        bitmap: Bitmap,
-        nominalX: Int,
-        nominalY: Int,
-        searchRadius: Int,
-        boardColor: IntArray
-    ): PieceBounds? {
-        val left = max(0, nominalX - searchRadius)
-        val top = max(0, nominalY - searchRadius)
-        val right = min(bitmap.width, nominalX + searchRadius)
-        val bottom = min(bitmap.height, nominalY + searchRadius)
-
-        val boardR = boardColor[0]
-        val boardG = boardColor[1]
-        val boardB = boardColor[2]
-
-        var sumX = 0L
-        var sumY = 0L
-        var count = 0
-        var minX = right
-        var maxX = left
-        var minY = bottom
-        var maxY = top
-
-        val step = max(1, searchRadius / 25)
-
-        for (y in top until bottom step step) {
-            for (x in left until right step step) {
-                val pixel = bitmap.getPixel(x, y)
-                val dr = Color.red(pixel) - boardR
-                val dg = Color.green(pixel) - boardG
-                val db = Color.blue(pixel) - boardB
-                val distance = sqrt((dr * dr + dg * dg + db * db).toDouble())
-
-                if (distance > BOARD_COLOR_DISTANCE_THRESHOLD) {
-                    sumX += x
-                    sumY += y
-                    count++
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-            }
-        }
-
-        if (count < 20) return null
-
-        val centerX = (sumX / count).toInt()
-        val centerY = (sumY / count).toInt()
-        val radius = max(maxX - minX, maxY - minY) / 2
-        return PieceBounds(centerX, centerY, radius)
     }
 
     /**
