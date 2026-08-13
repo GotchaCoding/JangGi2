@@ -1,15 +1,17 @@
 *.iml
 .gradle
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
 .DS_Store
 /build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
+
+# Android Studio 설정은 기기 목록·SDK 경로 등 개발자 PC마다 달라서 공유하지 않습니다.
+# easycode.ignore 는 이미 추적 중이라 예외로 둡니다.
+/.idea/
+!/.idea/easycode.ignore
+
+# Kotlin 컴파일러가 만드는 세션·에러 로그
+.kotlin/
