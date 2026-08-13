@@ -31,7 +31,7 @@ object TemplateBinarizer {
      *
      * 따라서 마스크 반지름 0.45면 기물 전체를 담으면서 이웃은 물지 않습니다.
      */
-    const val CELL_RADIUS_RATIO = 0.35f      // IntersectionCalculator 의 cellRadius = 0.35 * cell
+    const val CELL_RADIUS_RATIO = 0.4f       // IntersectionCalculator 가 쓰는 cellRadius / cell
     const val CROP_RADIUS_IN_CELLS = 0.55f   // 크롭 한 변 = 1.10 * cell
     private const val MASK_RADIUS_IN_CELLS = 0.45f
     private const val MASK_RATIO = MASK_RADIUS_IN_CELLS / (2 * CROP_RADIUS_IN_CELLS)

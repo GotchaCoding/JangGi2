@@ -182,12 +182,15 @@ class IntersectionCalculator @Inject constructor() {
             avgCellHeight
         }
 
-        // 최소 간격의 40%를 반지름으로 사용 (기물이 겹치지 않도록)
+        // 인접 셀과 겹치지 않도록 최소 간격 기준으로 반지름을 잡습니다.
+        // 비율은 [TemplateBinarizer]와 공유합니다 - [PieceDetector]가 이 값을
+        // 거꾸로 나눠서 셀 크기를 복원해 크롭 크기를 정하므로, 두 값이 어긋나면
+        // 크롭 배율이 통째로 틀어집니다.
         val minHorizontalSpacing = min(leftSpacing, rightSpacing)
         val minVerticalSpacing = min(topSpacing, bottomSpacing)
         val minSpacing = min(minHorizontalSpacing, minVerticalSpacing)
 
-        return minSpacing * 0.4f
+        return minSpacing * TemplateBinarizer.CELL_RADIUS_RATIO
     }
 
     /**
