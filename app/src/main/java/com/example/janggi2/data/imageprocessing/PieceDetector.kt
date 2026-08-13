@@ -887,10 +887,11 @@ class PieceDetector @Inject constructor(
 
         // 검출된 기물 그리기
         for (piece in detectedPieces) {
+            // 실제 기물 색과 같게: 초=파랑, 한=빨강
             val color = if (piece.player == Player.CHO) {
-                Scalar(255.0, 0.0, 0.0)  // Red
+                Scalar(0.0, 0.0, 255.0)
             } else {
-                Scalar(0.0, 0.0, 255.0)  // Blue
+                Scalar(255.0, 0.0, 0.0)
             }
 
             val radius = grid.averageCellWidth * 0.35

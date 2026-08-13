@@ -1,9 +1,13 @@
 package com.example.janggi2.data.imageprocessing
 
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.Rect
 import android.util.Log
+import org.opencv.android.Utils
+import org.opencv.core.Core
+import org.opencv.core.Mat
+import org.opencv.core.Scalar
+import org.opencv.imgproc.Imgproc
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,28 +38,14 @@ class BoardDetector @Inject constructor() {
         val width = bitmap.width
         val height = bitmap.height
 
-        var minX = width
-        var minY = height
-        var maxX = 0
-        var maxY = 0
-        var boardColorPixels = 0
-
-        val sampleStep = 4 // 성능을 위해 샘플링
-
-        for (y in 0 until height step sampleStep) {
-            for (x in 0 until width step sampleStep) {
-                val pixel = bitmap.getPixel(x, y)
-                if (isBoardColor(pixel)) {
-                    boardColorPixels++
-                    if (x < minX) minX = x
-                    if (y < minY) minY = y
-                    if (x > maxX) maxX = x
-                    if (y > maxY) maxY = y
-                }
-            }
+        val bounds = largestBoardComponent(bitmap) ?: run {
+            Log.w(TAG, "❌ Board detection failed: no board-coloured region")
+            return null
         }
-
-        Log.d(TAG, "Found $boardColorPixels board color pixels")
+        val minX = bounds.left
+        val minY = bounds.top
+        val maxX = bounds.right
+        val maxY = bounds.bottom
 
         // 유효한 영역인지 확인
         val detectedWidth = maxX - minX
@@ -77,13 +67,14 @@ class BoardDetector @Inject constructor() {
             return null
         }
 
-        // 약간의 패딩 추가
-        val padding = 10
+        // 패딩 없이 나무판 경계 그대로 반환합니다.
+        // [LineDetector]가 이 경계를 기준으로 격자 간격과 원점을 계산하므로,
+        // 여백을 붙이면 격자 전체가 그만큼 어긋납니다.
         val region = Rect(
-            (minX - padding).coerceAtLeast(0),
-            (minY - padding).coerceAtLeast(0),
-            (maxX + padding).coerceAtMost(width),
-            (maxY + padding).coerceAtMost(height)
+            minX.coerceAtLeast(0),
+            minY.coerceAtLeast(0),
+            maxX.coerceAtMost(width),
+            maxY.coerceAtMost(height)
         )
 
         Log.i(TAG, "✅ Board detected: ${region.width()}x${region.height()} at (${region.left},${region.top})")
@@ -162,41 +153,63 @@ class BoardDetector @Inject constructor() {
     }
 
     /**
-     * 장기판 색상인지 확인
-     * 다양한 디지털 장기판 색상 지원 (갈색, 노란색, 녹색, 회색 등)
+     * 보드 색 픽셀 중 가장 큰 덩어리의 경계를 구합니다.
+     *
+     * 색이 맞는 픽셀 전체의 최소/최대를 쓰면, 화면 어딘가의 UI 한 조각만 색이
+     * 비슷해도 경계가 그쪽까지 늘어납니다. 장기판은 화면에서 가장 큰 단일 덩어리
+     * 이므로 연결 요소 중 최대 면적만 취해서 그런 오염을 걸러냅니다.
+     *
+     * 회색·흰색에 가까운 색은 보드로 보지 않습니다. 그 범위를 허용하면 밝은
+     * 배경이나 하단 정보 영역이 통째로 보드로 잡힙니다.
      */
-    private fun isBoardColor(pixel: Int): Boolean {
-        val r = Color.red(pixel)
-        val g = Color.green(pixel)
-        val b = Color.blue(pixel)
+    private fun largestBoardComponent(bitmap: Bitmap): Rect? {
+        val rgba = Mat()
+        Utils.bitmapToMat(bitmap, rgba)
+        val hsv = Mat()
+        Imgproc.cvtColor(rgba, hsv, Imgproc.COLOR_RGBA2RGB)
+        Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGB2HSV)
+        rgba.release()
 
-        // HSV로 변환하여 검사
-        val hsv = FloatArray(3)
-        Color.colorToHSV(pixel, hsv)
+        // OpenCV HSV: H 0..179 (=각도/2), S·V 0..255
+        val mask = Mat()
+        // 전통 장기판 (갈색~노란색): 각도 15~60, 채도 0.15~0.9, 명도 0.3~0.95
+        Core.inRange(hsv, Scalar(7.0, 38.0, 76.0), Scalar(30.0, 230.0, 242.0), mask)
+        // 디지털 보드 (녹색 계열): 각도 80~160
+        val green = Mat()
+        Core.inRange(hsv, Scalar(40.0, 25.0, 76.0), Scalar(80.0, 153.0, 230.0), green)
+        Core.bitwise_or(mask, green, mask)
+        green.release()
+        hsv.release()
 
-        val hue = hsv[0]
-        val saturation = hsv[1]
-        val value = hsv[2]
+        val labels = Mat()
+        val stats = Mat()
+        val centroids = Mat()
+        val count = Imgproc.connectedComponentsWithStats(mask, labels, stats, centroids, 8)
+        mask.release()
+        labels.release()
+        centroids.release()
 
- 2        // 전통 장기판 색상 (갈색~노란색)
-        val isTraditionalBoard = hue in 15f..60f &&
-                saturation in 0.15f..0.9f &&
-                value in 0.3f..0.95f
+        var bestArea = 0
+        var best = -1
+        for (i in 1 until count) {
+            val area = stats.get(i, Imgproc.CC_STAT_AREA)[0].toInt()
+            if (area > bestArea) {
+                bestArea = area
+                best = i
+            }
+        }
+        if (best < 0) {
+            stats.release()
+            return null
+        }
 
-        // 카카오 장기 등 디지털 보드 (녹색 계열)
-        val isGreenBoard = hue in 80f..160f &&
-                saturation in 0.1f..0.6f &&
-                value in 0.3f..0.9f
+        val x = stats.get(best, Imgproc.CC_STAT_LEFT)[0].toInt()
+        val y = stats.get(best, Imgproc.CC_STAT_TOP)[0].toInt()
+        val w = stats.get(best, Imgproc.CC_STAT_WIDTH)[0].toInt()
+        val h = stats.get(best, Imgproc.CC_STAT_HEIGHT)[0].toInt()
+        stats.release()
 
-    // 회색/베이지 계열 보스톡드
-        val isNeutralBoard = saturation < 0.25f &&
-                value in 0.35f..0.85f
-
-        // 밝은 크림색/아이보리 보드
-        val isLightBoard = hue in 30f..60f &&
-                saturation in 0.05f..0.3f &&
-                value in 0.7f..0.98f
-
-        return isTraditionalBoard || isGreenBoard || isNeutralBoard || isLightBoard
+        Log.d(TAG, "Largest board component: ${w}x$h at ($x,$y), area=$bestArea")
+        return Rect(x, y, x + w, y + h)
     }
 }

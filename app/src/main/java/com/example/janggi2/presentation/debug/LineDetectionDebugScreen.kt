@@ -428,8 +428,8 @@ private fun StatsCard(stats: LineDetectionDebugViewModel.DetectionStats) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 StatItem("Total Pieces", "${stats.pieceCount}")
-                StatItem("CHO (Red)", "${stats.choCount}", Color.Red)
-                StatItem("HAN (Blue)", "${stats.hanCount}", Color.Blue)
+                StatItem("초 (파랑)", "${stats.choCount}", Color(0xFF0066FF))
+                StatItem("한 (빨강)", "${stats.hanCount}", Color.Red)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -621,8 +621,8 @@ private fun LegendCard() {
             ) {
                 LegendItem(Color.Green, "Board Lines")
                 LegendItem(Color.Blue, "Intersections")
-                LegendItem(Color.Red, "CHO Pieces")
-                LegendItem(Color(0xFF0066FF), "HAN Pieces")
+                LegendItem(Color(0xFF0066FF), "초 기물")
+                LegendItem(Color.Red, "한 기물")
             }
         }
     }

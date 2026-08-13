@@ -182,9 +182,9 @@ class CircleDetector @Inject constructor(
             val debugMat = mat.clone()
             for (circle in detectedCircles) {
                 val color = if (circle.player == Player.CHO) {
-                    Scalar(255.0, 0.0, 0.0)  // 빨강 = CHO
+                    Scalar(0.0, 0.0, 255.0)  // 파랑 = 초
                 } else {
-                    Scalar(0.0, 0.0, 255.0)  // 파랑 = HAN
+                    Scalar(255.0, 0.0, 0.0)  // 빨강 = 한
                 }
                 // 중심점 표시
                 Imgproc.circle(debugMat, circle.center, 5, color, -1)

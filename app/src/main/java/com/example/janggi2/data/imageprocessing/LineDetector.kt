@@ -72,10 +72,14 @@ class LineDetector @Inject constructor() {
                     return fallbackGridDetection(bitmap)
                 }
 
-                return processLineSegments(lineSegments2, mat.cols(), mat.rows(), bitmap, blackLineMask, mat)
+                return processLineSegments(
+                    lineSegments2, mat.cols(), mat.rows(), bitmap, blackLineMask, mat, boardRegion
+                )
             }
 
-            return processLineSegments(lineSegments, mat.cols(), mat.rows(), bitmap, blackLineMask, mat)
+            return processLineSegments(
+                lineSegments, mat.cols(), mat.rows(), bitmap, blackLineMask, mat, boardRegion
+            )
 
         } catch (e: Exception) {
             Log.e(TAG, "Line detection failed", e)
@@ -92,10 +96,11 @@ class LineDetector @Inject constructor() {
         height: Int,
         bitmap: Bitmap,
         blackLineMask: Mat,
-        mat: Mat
+        mat: Mat,
+        woodRegion: Rect?
     ): DetectedLines {
         // 4. 선분에서 세로선/가로선 분류
-        val (rawVertical, rawHorizontal, verticalSegments) = classifyLineSegments(lineSegments, width, height)
+        val (rawVertical, rawHorizontal) = classifyLineSegments(lineSegments, width, height)
         Log.d(TAG, "Classified: ${rawVertical.size} vertical, ${rawHorizontal.size} horizontal")
 
         // 5. 클러스터링으로 대표선 추출
@@ -103,39 +108,17 @@ class LineDetector @Inject constructor() {
         val clusteredHorizontal = clusterLines(rawHorizontal, height)
         Log.d(TAG, "Clustered: ${clusteredVertical.size} vertical, ${clusteredHorizontal.size} horizontal")
 
-        // 6. 세로선 먼저 확정 (9개)
-        val finalVertical = selectOrInterpolateLines(clusteredVertical, EXPECTED_VERTICAL_LINES)
-
-        // 7. 세로선 범위를 기준으로 장기판 높이 추정 (비율 9:10)
-        val boardWidth = if (finalVertical.size >= 2) {
-            finalVertical.last() - finalVertical.first()
-        } else {
-            width.toFloat()
-        }
-        val expectedBoardHeight = boardWidth * 10f / 9f  // 장기판 비율 9:10
-
-        // 7b. 세로선 자체의 세로 범위(y)로 보드 상하단 추정
-        //     세로선은 보드를 온전히 가로지르므로, 헤더/하단 UI 등 보드 밖 요소에
-        //     흔들리지 않는 훨씬 안정적인 기준입니다.
-        val verticalYRange = estimateBoardYRangeFromVerticals(verticalSegments)
-
-        // 8. 장기판 범위 내의 가로선만 필터링
-        val filteredHorizontal = filterHorizontalLinesInBoard(
-            clusteredHorizontal,
-            finalVertical,
-            expectedBoardHeight,
-            height,
-            verticalYRange
+        // 6. 등간격 격자로 확정
+        val region = woodRegion ?: Rect(0, 0, width, height)
+        val finalVertical = fitLattice(
+            clusteredVertical, region.left, region.width(), EXPECTED_VERTICAL_LINES
         )
-        Log.d(TAG, "Filtered horizontal: ${clusteredHorizontal.size} -> ${filteredHorizontal.size}")
-
-        // 9. 가로선 확정 (10개) - 장기판 범위 내에서만
-        val finalHorizontal = selectOrInterpolateLinesInRange(
-            filteredHorizontal,
-            EXPECTED_HORIZONTAL_LINES,
-            expectedBoardHeight
+        val finalHorizontal = fitLattice(
+            clusteredHorizontal, region.top, region.height(), EXPECTED_HORIZONTAL_LINES
         )
         Log.d(TAG, "Final: ${finalVertical.size} vertical, ${finalHorizontal.size} horizontal")
+        Log.d(TAG, "Lattice spacing: dx=${finalVertical[1] - finalVertical[0]}, " +
+                "dy=${finalHorizontal[1] - finalHorizontal[0]}")
 
         // 7. 보드 영역 계산
         val detectedBoardRegion = if (finalVertical.isNotEmpty() && finalHorizontal.isNotEmpty()) {
@@ -164,6 +147,74 @@ class LineDetector @Inject constructor() {
             confidence = confidence,
             boardRegion = detectedBoardRegion
         )
+    }
+
+    /**
+     * 등간격 격자 맞추기
+     *
+     * 장기판은 9×10 등간격 격자이므로, 검출된 선을 순서대로 갖다 쓰는 대신 격자
+     * 자체를 맞춥니다. 기물이 바깥 선을 가리면 그 선을 놓치는데, 순서대로 쓰면
+     * 격자 전체가 밀리거나 압축돼서 맨 윗줄·아랫줄이 판 밖으로 벗어납니다.
+     *
+     * 기준점은 나무판 영역입니다. 판은 바깥 선보다 정확히 반 칸 넓으므로
+     * `간격 = 영역크기 / 선개수`, `첫 선 = 가장자리 + 반 칸`이 닫힌 형태로 나오고,
+     * 검출된 선은 이 값을 반 칸 이내에서 다듬는 용도로만 씁니다.
+     *
+     * @param candidates 클러스터링된 선 좌표 (비어 있어도 됨)
+     * @param regionStart 나무판 영역의 시작 좌표
+     * @param regionSize 나무판 영역의 크기
+     * @param count 이 축에 필요한 선 개수
+     */
+    private fun fitLattice(
+        candidates: List<Float>,
+        regionStart: Int,
+        regionSize: Int,
+        count: Int
+    ): List<Float> {
+        val cell0 = regionSize.toFloat() / count
+        val origin0 = regionStart + cell0 / 2f
+
+        if (candidates.isEmpty() || cell0 <= 0f) {
+            Log.d(TAG, "fitLattice: no candidates, using board region estimate")
+            return List(count) { origin0 + cell0 * it }
+        }
+
+        val sorted = candidates.sorted()
+        val tolerance = cell0 * 0.25f
+        var bestScore = -1f
+        var bestOrigin = origin0
+        var bestCell = cell0
+
+        var scale = 0.94f
+        while (scale <= 1.0601f) {
+            val cell = cell0 * scale
+            var origin = origin0 - cell0 * 0.30f
+            val originEnd = origin0 + cell0 * 0.30f
+            while (origin <= originEnd) {
+                var score = 0f
+                for (i in 0 until count) {
+                    val target = origin + cell * i
+                    var nearest = Float.MAX_VALUE
+                    for (c in sorted) {
+                        val d = abs(c - target)
+                        if (d < nearest) nearest = d
+                        if (c > target && d > nearest) break
+                    }
+                    if (nearest < tolerance) score += 1f - nearest / tolerance
+                }
+                if (score > bestScore) {
+                    bestScore = score
+                    bestOrigin = origin
+                    bestCell = cell
+                }
+                origin += 1f
+            }
+            scale += 0.005f
+        }
+
+        Log.d(TAG, "fitLattice: count=$count cell=$bestCell origin=$bestOrigin " +
+                "match=${"%.1f".format(bestScore)}/$count")
+        return List(count) { bestOrigin + bestCell * it }
     }
 
     /**
@@ -276,21 +327,15 @@ class LineDetector @Inject constructor() {
     }
 
     /**
-     * 세로선 선분의 X 위치와 Y 범위(어디서부터 어디까지 뻗어있는지)
-     */
-    private data class VerticalSegment(val avgX: Float, val minY: Float, val maxY: Float, val length: Double)
-
-    /**
      * 선분을 세로선/가로선으로 분류
      */
     private fun classifyLineSegments(
         lineSegments: List<DoubleArray>,
         width: Int,
         height: Int
-    ): Triple<MutableList<Float>, MutableList<Float>, List<VerticalSegment>> {
+    ): Pair<MutableList<Float>, MutableList<Float>> {
         val verticalXs = mutableListOf<Float>()
         val horizontalYs = mutableListOf<Float>()
-        val verticalSegments = mutableListOf<VerticalSegment>()
 
         for (segment in lineSegments) {
             val x1 = segment[0]
@@ -311,9 +356,6 @@ class LineDetector @Inject constructor() {
                 val avgX = ((x1 + x2) / 2).toFloat()
                 if (avgX in 0f..width.toFloat()) {
                     verticalXs.add(avgX)
-                    verticalSegments.add(
-                        VerticalSegment(avgX, min(y1, y2).toFloat(), max(y1, y2).toFloat(), length)
-                    )
                     Log.v(TAG, "Vertical line at x=$avgX (dy=$dy, dx=$dx)")
                 }
             }
@@ -327,31 +369,7 @@ class LineDetector @Inject constructor() {
             }
         }
 
-        return Triple(verticalXs, horizontalYs, verticalSegments)
-    }
-
-    /**
-     * 세로선 선분들의 Y 범위로 보드 상하단을 추정합니다.
-     *
-     * 세로선은 보드를 위에서 아래까지 온전히 가로지르므로, 헤더/하단 UI 등
-     * 보드 밖에서 검출된 가로선 노이즈에 흔들리지 않는 안정적인 기준입니다.
-     * 짧은(=보드 밖 UI 요소일 가능성이 높은) 세로선은 제외하고, 충분히 긴
-     * 세로선들의 상단/하단 Y좌표 중앙값을 사용합니다.
-     */
-    private fun estimateBoardYRangeFromVerticals(segments: List<VerticalSegment>): Pair<Float, Float>? {
-        if (segments.isEmpty()) return null
-
-        val maxLength = segments.maxOf { it.length }
-        val longSegments = segments.filter { it.length >= maxLength * 0.6 }
-        if (longSegments.isEmpty()) return null
-
-        val tops = longSegments.map { it.minY }.sorted()
-        val bottoms = longSegments.map { it.maxY }.sorted()
-        val top = tops[tops.size / 2]
-        val bottom = bottoms[bottoms.size / 2]
-
-        Log.d(TAG, "Board Y range from ${longSegments.size} long vertical segments: $top ~ $bottom")
-        return Pair(top, bottom)
+        return Pair(verticalXs, horizontalYs)
     }
 
     /**
@@ -385,223 +403,6 @@ class LineDetector @Inject constructor() {
 
         Log.d(TAG, "Clustered ${lines.size} lines -> ${clusterCenters.size} clusters")
         return clusterCenters
-    }
-
-    /**
-     * 장기판 범위 내의 가로선만 필터링
-     * 세로선의 범위와 장기판 비율(9:10)을 기준으로 유효한 가로선만 선택
-     */
-    private fun filterHorizontalLinesInBoard(
-        horizontalLines: List<Float>,
-        verticalLines: List<Float>,
-        expectedBoardHeight: Float,
-        imageHeight: Int,
-        verticalYRange: Pair<Float, Float>?
-    ): List<Float> {
-        if (horizontalLines.isEmpty() || verticalLines.size < 2) {
-            return horizontalLines
-        }
-
-        val (boardTop, boardBottom) = if (verticalYRange != null) {
-            verticalYRange
-        } else {
-            // 폴백: 세로선 Y범위를 못 구했을 때만 가로선 min/max 중심으로 추정
-            // (헤더/하단 UI 등 보드 밖 노이즈에 취약하므로 최후의 수단)
-            val sortedH = horizontalLines.sorted()
-            val hCenter = (sortedH.first() + sortedH.last()) / 2
-            val halfHeight = expectedBoardHeight / 2
-            Pair(hCenter - halfHeight, hCenter + halfHeight)
-        }
-
-        Log.d(TAG, "Board Y range: $boardTop ~ $boardBottom (height=$expectedBoardHeight)")
-
-        // 마진 10% 추가하여 필터링
-        val margin = expectedBoardHeight * 0.1f
-        val filtered = horizontalLines.filter { y ->
-            y >= (boardTop - margin) && y <= (boardBottom + margin)
-        }
-
-        Log.d(TAG, "Horizontal lines filtered: ${horizontalLines.size} -> ${filtered.size}")
-        return filtered
-    }
-
-    /**
-     * 지정된 범위 내에서 선 선택/보간
-     */
-    private fun selectOrInterpolateLinesInRange(
-        lines: List<Float>,
-        expectedCount: Int,
-        expectedRange: Float
-    ): List<Float> {
-        if (lines.isEmpty()) {
-            Log.w(TAG, "No horizontal lines to process")
-            return emptyList()
-        }
-
-        val sorted = lines.sorted()
-
-        // 검출된 선이 충분하면 균등 간격으로 선택
-        if (sorted.size >= expectedCount) {
-            return selectEvenlySpacedLines(sorted, expectedCount)
-        }
-
-        // 부족하면 검출된 범위 내에서만 보간
-        return fillMissingLinesInRange(sorted, expectedCount)
-    }
-
-    /**
-     * 검출된 선들의 범위 내에서만 빠진 선 채우기
-     * 범위를 벗어나지 않음
-     */
-    private fun fillMissingLinesInRange(detectedLines: List<Float>, expectedCount: Int): List<Float> {
-        if (detectedLines.size < 2) {
-            Log.w(TAG, "Need at least 2 lines to fill missing in range")
-            return detectedLines
-        }
-
-        val sorted = detectedLines.sorted()
-        val minVal = sorted.first()  // 검출된 첫 번째 선 (장기판 상단)
-        val maxVal = sorted.last()   // 검출된 마지막 선 (장기판 하단)
-        val range = maxVal - minVal
-
-        // 검출된 범위 내에서 균등 분할
-        val spacing = range / (expectedCount - 1)
-
-        Log.d(TAG, "Fill in range: $minVal ~ $maxVal (range=$range, spacing=$spacing)")
-
-        val result = mutableListOf<Float>()
-        for (i in 0 until expectedCount) {
-            val idealPos = minVal + spacing * i
-
-            // 검출된 선 중 가까운 것이 있으면 사용
-            val closest = sorted.minByOrNull { abs(it - idealPos) }
-            val tolerance = spacing * 0.3f
-
-            if (closest != null && abs(closest - idealPos) < tolerance && closest !in result) {
-                result.add(closest)
-            } else {
-                result.add(idealPos)
-            }
-        }
-
-        return result.sorted()
-    }
-
-    /**
-     * 선 개수에 맞게 선택 또는 보간
-     * 검출된 선을 기반으로 빠진 선을 균등 간격으로 채웁니다.
-     */
-    private fun selectOrInterpolateLines(lines: List<Float>, expectedCount: Int): List<Float> {
-        if (lines.isEmpty()) {
-            Log.w(TAG, "No lines to process, cannot interpolate")
-            return emptyList()
-        }
-
-        val sorted = lines.sorted()
-
-        // 검출된 선이 충분하면 균등 간격으로 선택
-        if (sorted.size >= expectedCount) {
-            return selectEvenlySpacedLines(sorted, expectedCount)
-        }
-
-        // 부족하면 보간하여 빠진 선 채우기
-        return fillMissingLines(sorted, expectedCount)
-    }
-
-    /**
-     * 균등 간격으로 선 선택
-     */
-    private fun selectEvenlySpacedLines(lines: List<Float>, count: Int): List<Float> {
-        if (lines.size <= count) return lines
-
-        val minVal = lines.first()
-        val maxVal = lines.last()
-        val idealSpacing = (maxVal - minVal) / (count - 1)
-
-        val result = mutableListOf<Float>()
-        val used = BooleanArray(lines.size)
-
-        for (i in 0 until count) {
-            val idealPos = minVal + idealSpacing * i
-
-            // 가장 가까운 미사용 선 찾기
-            var bestIdx = -1
-            var bestDist = Float.MAX_VALUE
-
-            for (j in lines.indices) {
-                if (!used[j]) {
-                    val dist = abs(lines[j] - idealPos)
-                    if (dist < bestDist) {
-                        bestDist = dist
-                        bestIdx = j
-                    }
-                }
-            }
-
-            if (bestIdx >= 0) {
-                result.add(lines[bestIdx])
-                used[bestIdx] = true
-            }
-        }
-
-        return result.sorted()
-    }
-
-    /**
-     * 빠진 선을 균등 간격으로 채우기
-     * 검출된 선들 사이의 평균 간격을 계산하여 빠진 위치에 선을 추가합니다.
-     */
-    private fun fillMissingLines(detectedLines: List<Float>, expectedCount: Int): List<Float> {
-        if (detectedLines.size < 2) {
-            Log.w(TAG, "Need at least 2 lines to fill missing")
-            return detectedLines
-        }
-
-        val sorted = detectedLines.sorted()
-        val minVal = sorted.first()
-        val maxVal = sorted.last()
-
-        // 검출된 선들 사이의 간격 분석
-        val gaps = mutableListOf<Float>()
-        for (i in 1 until sorted.size) {
-            gaps.add(sorted[i] - sorted[i - 1])
-        }
-
-        // 가장 작은 간격을 기준 간격으로 사용 (1칸 간격으로 추정)
-        val minGap = gaps.minOrNull() ?: return sorted
-        val unitSpacing = minGap
-
-        Log.d(TAG, "Fill missing: detected=${sorted.size}, expected=$expectedCount, unitSpacing=$unitSpacing")
-
-        // 전체 범위에서 예상되는 선 개수 계산
-        val totalRange = maxVal - minVal
-        val estimatedCount = (totalRange / unitSpacing).toInt() + 1
-
-        // 실제 간격 계산 (expectedCount 기준)
-        val actualSpacing = totalRange / (expectedCount - 1)
-
-        Log.d(TAG, "Range=$totalRange, estimatedCount=$estimatedCount, actualSpacing=$actualSpacing")
-
-        // expectedCount개의 선을 균등 배치
-        val result = mutableListOf<Float>()
-        for (i in 0 until expectedCount) {
-            val idealPos = minVal + actualSpacing * i
-
-            // 검출된 선 중 가까운 것이 있으면 사용 (오차 허용: 간격의 30%)
-            val closest = sorted.minByOrNull { abs(it - idealPos) }
-            val tolerance = actualSpacing * 0.3f
-
-            if (closest != null && abs(closest - idealPos) < tolerance && closest !in result) {
-                result.add(closest)
-                Log.v(TAG, "Using detected line at $closest for position $i (ideal=$idealPos)")
-            } else {
-                result.add(idealPos)
-                Log.v(TAG, "Interpolated line at $idealPos for position $i")
-            }
-        }
-
-        Log.d(TAG, "Filled: ${detectedLines.size} -> ${result.size} lines")
-        return result.sorted()
     }
 
     /**
