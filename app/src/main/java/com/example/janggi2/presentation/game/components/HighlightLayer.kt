@@ -17,14 +17,20 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Position
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * Overlay layer that renders selection highlight, valid move indicators, and check warning.
+ * Overlay layer that renders selection highlight, valid move indicators, check warning,
+ * and the AI hint arrow.
  *
  * @param selectedPosition The currently selected piece position (highlighted in yellow)
  * @param validMoves List of valid move positions (shown as green circles)
  * @param checkPosition Position of General in check (shown with pulsing red border)
+ * @param hintMove Move suggested by the engine (drawn as a blue arrow)
  * @param cellWidth Width of each board cell
  * @param cellHeight Height of each board cell
  */
@@ -35,7 +41,8 @@ fun HighlightLayer(
     cellWidth: Dp,
     cellHeight: Dp,
     modifier: Modifier = Modifier,
-    checkPosition: Position? = null
+    checkPosition: Position? = null,
+    hintMove: Move? = null
 ) {
     // Pulsing animation for check indicator
     val infiniteTransition = rememberInfiniteTransition(label = "checkPulse")
@@ -53,6 +60,11 @@ fun HighlightLayer(
         // Draw check indicator (pulsing red border)
         checkPosition?.let { pos ->
             drawCheckIndicator(pos, cellWidth.toPx(), cellHeight.toPx(), checkAlpha)
+        }
+
+        // Draw the hint first so a selected piece stays visible on top of it
+        hintMove?.let { move ->
+            drawHintArrow(move, cellWidth.toPx(), cellHeight.toPx())
         }
 
         // Draw selected piece highlight
@@ -107,6 +119,52 @@ private fun DrawScope.drawValidMoveIndicator(
         color = indicatorColor,
         radius = radius,
         center = Offset(centerX, centerY)
+    )
+}
+
+/**
+ * Draws the engine's suggested move: a ring on each end and an arrow between them.
+ *
+ * 장기의 한 수 쉼은 출발과 도착이 같은 수로 표현되므로, 그 경우에는 길이 0인
+ * 화살표 대신 링 하나만 그립니다.
+ */
+private fun DrawScope.drawHintArrow(
+    move: Move,
+    cellWidth: Float,
+    cellHeight: Float
+) {
+    val hintColor = Color(0xFF2196F3) // Blue - 노랑(선택)/초록(이동)/빨강(장군)과 구분
+    val ringRadius = 24f
+    val headLength = 26f
+    val headAngle = 0.5f // radians
+
+    val from = Offset(move.from.col * cellWidth, move.from.row * cellHeight)
+    val to = Offset(move.to.col * cellWidth, move.to.row * cellHeight)
+
+    drawCircle(hintColor, ringRadius, from, style = Stroke(width = 5f))
+
+    if (move.from == move.to) return
+
+    drawCircle(hintColor, ringRadius, to, style = Stroke(width = 5f))
+
+    val angle = atan2(to.y - from.y, to.x - from.x)
+    // 양 끝의 링 안쪽으로 파고들지 않도록 선을 링 경계에서 시작하고 끝냅니다.
+    val start = Offset(from.x + cos(angle) * ringRadius, from.y + sin(angle) * ringRadius)
+    val end = Offset(to.x - cos(angle) * ringRadius, to.y - sin(angle) * ringRadius)
+
+    drawLine(hintColor, start, end, strokeWidth = 6f)
+
+    drawLine(
+        hintColor,
+        end,
+        Offset(end.x - cos(angle - headAngle) * headLength, end.y - sin(angle - headAngle) * headLength),
+        strokeWidth = 6f
+    )
+    drawLine(
+        hintColor,
+        end,
+        Offset(end.x - cos(angle + headAngle) * headLength, end.y - sin(angle + headAngle) * headLength),
+        strokeWidth = 6f
     )
 }
 

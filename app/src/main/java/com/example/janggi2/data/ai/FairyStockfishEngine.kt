@@ -5,6 +5,8 @@ import com.example.janggi2.domain.ai.AiEngine
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,11 +14,9 @@ import javax.inject.Singleton
 /**
  * Implementation of AiEngine using Fairy-Stockfish via JNI.
  *
- * This class manages the native Fairy-Stockfish engine through JNI calls
- * and provides a Kotlin-friendly interface for AI move calculation.
- *
- * Thread Safety: All public methods use withContext(Dispatchers.IO) to ensure
- * native calls happen on background threads.
+ * Thread safety: native 호출은 Dispatchers.IO 에서 하고, 탐색 한 건 전체를
+ * [mutex] 로 감쌉니다. Fairy-Stockfish 의 Threads / Search::Limits / Options 는
+ * 프로세스 전역이라, 힌트와 AI 착수가 동시에 탐색하면 서로를 덮어씁니다.
  */
 @Singleton
 class FairyStockfishEngine @Inject constructor(
@@ -39,70 +39,67 @@ class FairyStockfishEngine @Inject constructor(
     }
 
     private var enginePtr: Long = 0L
+
+    @Volatile
     private var isInitialized = false
 
-    override suspend fun initialize() = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Initializing Fairy-Stockfish engine")
+    /** 엔진 전역 상태를 건드리는 구간을 직렬화합니다. */
+    private val mutex = Mutex()
 
-        if (isInitialized) {
-            Log.w(TAG, "Engine already initialized")
-            return@withContext
+    override suspend fun initialize() {
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (isInitialized) {
+                    Log.w(TAG, "Engine already initialized")
+                    return@withLock
+                }
+
+                Log.d(TAG, "Initializing Fairy-Stockfish engine")
+                enginePtr = nativeInit()
+                if (enginePtr == 0L) {
+                    throw IllegalStateException("Failed to initialize Fairy-Stockfish engine")
+                }
+
+                isInitialized = true
+                Log.d(TAG, "Engine initialized successfully (ptr: $enginePtr)")
+            }
         }
-
-        enginePtr = nativeInit()
-
-        if (enginePtr == 0L) {
-            throw IllegalStateException("Failed to initialize Fairy-Stockfish engine")
-        }
-
-        isInitialized = true
-        Log.d(TAG, "Engine initialized successfully (ptr: $enginePtr)")
-    }
-
-    override suspend fun setDifficulty(difficulty: Int) = withContext(Dispatchers.IO) {
-        require(difficulty in 1..20) {
-            "Difficulty must be between 1 and 20, got: $difficulty"
-        }
-
-        checkInitialized()
-        Log.d(TAG, "Setting difficulty to $difficulty")
-
-        nativeSetDifficulty(enginePtr, difficulty)
     }
 
     override suspend fun getBestMove(
         gameState: GameState,
-        thinkTimeMs: Int
-    ): Move? = withContext(Dispatchers.IO) {
+        thinkTimeMs: Int,
+        skillLevel: Int
+    ): Move? {
+        require(skillLevel in 1..20) {
+            "Skill level must be between 1 and 20, got: $skillLevel"
+        }
         checkInitialized()
 
-        try {
-            // Convert game state to UCI position command
-            val uciPosition = uciProtocol.formatPosition(gameState)
-            Log.d(TAG, "Setting position: $uciPosition")
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                try {
+                    nativeSetDifficulty(enginePtr, skillLevel)
 
-            nativeSetPosition(enginePtr, uciPosition)
+                    val position = uciProtocol.formatPosition(gameState)
+                    Log.d(TAG, "Setting position: $position")
+                    nativeSetPosition(enginePtr, position)
 
-            // Calculate best move
-            Log.d(TAG, "Calculating best move (think time: ${thinkTimeMs}ms)")
-            val uciMove = nativeGetBestMove(enginePtr, thinkTimeMs)
+                    Log.d(TAG, "Searching (skill=$skillLevel, ${thinkTimeMs}ms)")
+                    val uciMove = nativeGetBestMove(enginePtr, thinkTimeMs)
+                    if (uciMove.isEmpty()) {
+                        Log.w(TAG, "No best move returned from engine")
+                        return@withLock null
+                    }
 
-            if (uciMove.isEmpty()) {
-                Log.w(TAG, "No best move returned from engine")
-                return@withContext null
+                    val move = notationConverter.uciToMove(uciMove, gameState)
+                    Log.d(TAG, "Best move: $uciMove -> from=${move.from}, to=${move.to}")
+                    move
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error calculating best move", e)
+                    null
+                }
             }
-
-            Log.d(TAG, "Best move: $uciMove")
-
-            // Convert UCI move to Move object
-            val move = notationConverter.uciToMove(uciMove, gameState)
-            Log.d(TAG, "Converted move: from=${move.from}, to=${move.to}")
-
-            move
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error calculating best move", e)
-            null
         }
     }
 

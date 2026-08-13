@@ -14,6 +14,7 @@ import com.example.janggi2.domain.rules.CheckDetector
 import com.example.janggi2.domain.rules.GameRules
 import com.example.janggi2.domain.ai.AiEngine
 import com.example.janggi2.domain.usecase.GetAiMoveUseCase
+import com.example.janggi2.domain.usecase.GetHintUseCase
 import com.example.janggi2.domain.usecase.InitializeAiUseCase
 import com.example.janggi2.domain.usecase.LoadGameUseCase
 import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
@@ -36,7 +37,11 @@ data class GameUiState(
     val showGameOverDialog: Boolean = false,
     val isLoading: Boolean = false,
     val showNewGameDialog: Boolean = false,
-    val showAiSettingsDialog: Boolean = false
+    val showAiSettingsDialog: Boolean = false,
+    /** 엔진이 추천한 수. 보드에 화살표로만 그리고, 두지는 않습니다. */
+    val hint: Move? = null,
+    val isHintLoading: Boolean = false,
+    val hintError: String? = null
 )
 
 /**
@@ -51,7 +56,8 @@ class GameViewModel @Inject constructor(
     private val loadGameForReplayUseCase: LoadGameForReplayUseCase,
     private val aiEngine: AiEngine,
     private val initializeAiUseCase: InitializeAiUseCase,
-    private val getAiMoveUseCase: GetAiMoveUseCase
+    private val getAiMoveUseCase: GetAiMoveUseCase,
+    private val getHintUseCase: GetHintUseCase
 ) : ViewModel() {
     companion object {
         private const val TAG = "GameViewModel"
@@ -106,6 +112,8 @@ class GameViewModel @Inject constructor(
             )
             is GameUiEvent.ShowAiSettingsDialog -> showAiSettingsDialog()
             is GameUiEvent.DismissAiSettingsDialog -> dismissAiSettingsDialog()
+            is GameUiEvent.RequestHint -> requestHint()
+            is GameUiEvent.DismissHintError -> dismissHintError()
         }
     }
 
@@ -189,6 +197,7 @@ class GameViewModel @Inject constructor(
                 gameState = newGameState,
                 selectedPiece = null,
                 validMoves = emptyList(),
+                hint = null,
                 showGameOverDialog = newGameState.isGameOver()
             )
 
@@ -242,7 +251,8 @@ class GameViewModel @Inject constructor(
             _uiState.value = currentState.copy(
                 gameState = previousState,
                 selectedPiece = null,
-                validMoves = emptyList()
+                validMoves = emptyList(),
+                hint = null
             )
             autoSave()
         }
@@ -259,7 +269,8 @@ class GameViewModel @Inject constructor(
             _uiState.value = currentState.copy(
                 gameState = nextState,
                 selectedPiece = null,
-                validMoves = emptyList()
+                validMoves = emptyList(),
+                hint = null
             )
             autoSave()
         }
@@ -467,7 +478,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -480,7 +492,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -493,7 +506,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -506,7 +520,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -519,7 +534,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -532,7 +548,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
@@ -545,7 +562,8 @@ class GameViewModel @Inject constructor(
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
-            validMoves = emptyList()
+            validMoves = emptyList(),
+            hint = null
         )
         // Auto-save after continuing from replay
         autoSave()
@@ -606,6 +624,57 @@ class GameViewModel @Inject constructor(
     }
 
     /**
+     * Asks the engine for the best move for the side to move and shows it as an arrow.
+     * 수를 두지는 않습니다.
+     */
+    private fun requestHint() {
+        val currentState = _uiState.value
+        val gameState = currentState.gameState
+
+        if (currentState.isHintLoading) return
+        if (gameState.isGameOver() || gameState.isReplayMode) return
+        if (!aiEngine.isReady()) {
+            _uiState.value = currentState.copy(hintError = "AI 엔진을 준비 중입니다. 잠시 후 다시 시도해주세요.")
+            return
+        }
+        // 사진 인식은 일부만 인식된 판도 허용하므로 궁이 빠져 있을 수 있습니다.
+        // 그 상태로 엔진에 넘기면 합법수 생성이 정의되지 않으므로 미리 막습니다.
+        if (gameState.getGeneral(Player.CHO) == null || gameState.getGeneral(Player.HAN) == null) {
+            _uiState.value = currentState.copy(hintError = "궁이 없어 힌트를 계산할 수 없습니다.")
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isHintLoading = true, hintError = null)
+            try {
+                val hint = getHintUseCase(gameState)
+
+                // 계산하는 동안 판이 바뀌었으면 결과를 버립니다.
+                if (_uiState.value.gameState !== gameState) {
+                    Log.d(TAG, "Discarding stale hint")
+                    return@launch
+                }
+
+                if (hint == null) {
+                    _uiState.value = _uiState.value.copy(hintError = "추천할 수를 찾지 못했습니다.")
+                } else {
+                    Log.d(TAG, "Hint: ${hint.from} -> ${hint.to}")
+                    _uiState.value = _uiState.value.copy(hint = hint)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error requesting hint", e)
+                _uiState.value = _uiState.value.copy(hintError = "힌트 계산 중 오류가 발생했습니다.")
+            } finally {
+                _uiState.value = _uiState.value.copy(isHintLoading = false)
+            }
+        }
+    }
+
+    private fun dismissHintError() {
+        _uiState.value = _uiState.value.copy(hintError = null)
+    }
+
+    /**
      * Sets AI difficulty level.
      */
     private fun setAiDifficulty(difficulty: Int) {
@@ -630,8 +699,7 @@ class GameViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        // Clean up AI engine resources
-        aiEngine.destroy()
-        Log.d(TAG, "AI engine destroyed")
+        // 엔진은 @Singleton 이고 네이티브 탐색은 viewModelScope 취소로 멈출 수 없습니다.
+        // 여기서 destroy() 하면 탐색 중인 객체가 삭제될 수 있어 프로세스 수명 동안 살려둡니다.
     }
 }

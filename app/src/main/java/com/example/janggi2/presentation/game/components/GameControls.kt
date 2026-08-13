@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -36,6 +38,8 @@ fun GameControls(
     onImportClick: () -> Unit,
     onResetClick: () -> Unit,
     onDebugClick: () -> Unit = {},
+    onHintClick: () -> Unit = {},
+    isHintLoading: Boolean = false,
     isAiGame: Boolean = false,
     onShowAiSettings: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -66,6 +70,20 @@ fun GameControls(
                 enabled = canRedo
             ) {
                 Text("다시실행")
+            }
+
+            Button(
+                onClick = onHintClick,
+                enabled = !isHintLoading
+            ) {
+                if (isHintLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("AI 힌트")
+                }
             }
         }
 

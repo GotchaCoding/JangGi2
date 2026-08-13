@@ -32,12 +32,14 @@ public:
     // Set skill level (0-20)
     void setSkillLevel(int level);
 
-    // Set position from UCI notation
-    // Format: "startpos" or "startpos moves a0b0 c1d2 ..."
+    // Set position.
+    // Format: "startpos [moves ...]" or "fen <6 fields> [moves ...]"
+    // Squares are a1..i10 - see UCI::square(); this build never runs UCI::loop,
+    // so CurrentProtocol stays UCI_GENERAL and ranks are 1-based.
     bool setPosition(const std::string& positionCommand);
 
     // Calculate best move with given time limit (milliseconds)
-    // Returns move in UCI format (e.g., "a0b0")
+    // Returns move in UCI format (e.g., "a1b1", "a10b10")
     std::string getBestMove(int thinkTimeMs);
 
     // Check if engine is initialized
@@ -52,8 +54,8 @@ private:
     // Initialize Stockfish subsystems
     void initStockfish();
 
-    // Parse UCI moves and apply to position
-    bool applyMoves(const std::string& moves);
+    // Look up the Janggi variant, or nullptr if it is missing
+    const Stockfish::Variant* janggiVariant();
 };
 
 #endif // UCI_ENGINE_H

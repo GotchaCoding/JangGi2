@@ -22,6 +22,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.janggi2.domain.model.GameStatus
+import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.presentation.common.ConfirmDialog
@@ -96,6 +97,7 @@ fun GameScreen(
                 selectedPiece = if (uiState.gameState.isReplayMode) null else uiState.selectedPiece,
                 validMoves = if (uiState.gameState.isReplayMode) emptyList() else uiState.validMoves,
                 checkPosition = getCheckPosition(uiState.gameState),
+                hintMove = if (uiState.gameState.isReplayMode) null else uiState.hint,
                 onBoardTap = { position ->
                     viewModel.onEvent(GameUiEvent.BoardTapped(position))
                 },
@@ -135,6 +137,10 @@ fun GameScreen(
                 GameControls(
                     canUndo = uiState.gameState.canUndo(),
                     canRedo = uiState.gameState.canRedo(),
+                    isHintLoading = uiState.isHintLoading,
+                    onHintClick = {
+                        viewModel.onEvent(GameUiEvent.RequestHint)
+                    },
                     onUndoClick = {
                         viewModel.onEvent(GameUiEvent.Undo)
                     },
@@ -179,6 +185,17 @@ fun GameScreen(
             onDismiss = {
                 viewModel.onEvent(GameUiEvent.DismissGameOverDialog)
             }
+        )
+    }
+
+    // Hint could not be produced (engine not ready, no general on the board, ...)
+    uiState.hintError?.let { message ->
+        ConfirmDialog(
+            title = "AI 힌트",
+            message = message,
+            confirmText = "확인",
+            onConfirm = { viewModel.onEvent(GameUiEvent.DismissHintError) },
+            onDismiss = { viewModel.onEvent(GameUiEvent.DismissHintError) }
         )
     }
 
@@ -251,7 +268,8 @@ private fun BoardWithPieces(
     validMoves: List<Position>,
     onBoardTap: (Position) -> Unit,
     modifier: Modifier = Modifier,
-    checkPosition: Position? = null
+    checkPosition: Position? = null,
+    hintMove: Move? = null
 ) {
     BoxWithConstraints(
         modifier = modifier,
@@ -289,7 +307,8 @@ private fun BoardWithPieces(
                 validMoves = validMoves,
                 cellWidth = cellWidth,
                 cellHeight = cellHeight,
-                checkPosition = checkPosition
+                checkPosition = checkPosition,
+                hintMove = hintMove
             )
 
             // Draw all pieces

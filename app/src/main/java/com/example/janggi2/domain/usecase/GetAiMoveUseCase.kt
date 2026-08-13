@@ -34,10 +34,6 @@ class GetAiMoveUseCase @Inject constructor(
             "AI engine must be initialized before calculating moves"
         }
 
-        // Set difficulty from game state
-        aiEngine.setDifficulty(gameState.aiDifficulty)
-
-        // Calculate best move
-        return aiEngine.getBestMove(gameState, thinkTimeMs)
+        return aiEngine.getBestMove(gameState, thinkTimeMs, skillLevel = gameState.aiDifficulty)
     }
 }

@@ -5,75 +5,21 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Formats GameState into UCI protocol commands for Fairy-Stockfish.
+ * Formats a [GameState] into the position command the native engine accepts.
  *
- * UCI Protocol for position:
- * - "startpos" - initial position
- * - "startpos moves a0b0 c1d2 ..." - initial position with moves applied
- *
- * Example:
- * - Empty move history: "startpos"
- * - After 2 moves: "startpos moves a0b0 c9d9"
+ * 항상 FEN으로 보냅니다. `startpos moves ...` 는 이 앱에 쓸 수 없는데,
+ * 마·상 배치가 대국자 선택이라 엔진의 고정 startFen 과 다를 수 있고,
+ * 사진에서 불러온 판은 수순 기록이 아예 없기 때문입니다.
  */
 @Singleton
 class UciProtocol @Inject constructor(
-    private val notationConverter: NotationConverter
+    private val fenConverter: FenConverter
 ) {
 
     /**
-     * Formats the current game state as a UCI position command.
-     *
-     * @param gameState Current game state
-     * @return UCI position command string
-     *
-     * Examples:
-     * - "startpos" (initial position)
-     * - "startpos moves a0b0 c9d9" (after moves)
+     * @return e.g. "fen rbna1anbr/4k4/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/4K4/RBNA1ANBR w - - 0 1"
      */
     fun formatPosition(gameState: GameState): String {
-        // Start with initial position
-        val builder = StringBuilder("startpos")
-
-        // Add moves if any
-        if (gameState.moveHistory.isNotEmpty()) {
-            builder.append(" moves")
-
-            gameState.moveHistory.forEach { move ->
-                val uciMove = notationConverter.moveToUci(move)
-                builder.append(" ").append(uciMove)
-            }
-        }
-
-        return builder.toString()
-    }
-
-    /**
-     * Formats a skill level setting command.
-     *
-     * @param level Skill level (1-20)
-     * @return UCI setoption command
-     */
-    fun formatSkillLevelCommand(level: Int): String {
-        val clampedLevel = level.coerceIn(1, 20)
-        return "setoption name Skill Level value $clampedLevel"
-    }
-
-    /**
-     * Formats a time limit for move calculation.
-     *
-     * @param timeMs Time in milliseconds
-     * @return UCI go command with movetime
-     */
-    fun formatMoveTimeCommand(timeMs: Int): String {
-        return "go movetime $timeMs"
-    }
-
-    /**
-     * Formats variant selection command.
-     *
-     * @return UCI setoption command for Janggi variant
-     */
-    fun formatVariantCommand(): String {
-        return "setoption name UCI_Variant value janggi"
+        return "fen ${fenConverter.toFen(gameState)}"
     }
 }

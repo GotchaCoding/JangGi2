@@ -80,19 +80,28 @@ void UciEngine::initStockfish() {
     }
 }
 
+// 앱의 규칙 계층(CheckDetector/GameStatus)이 빅장을 종료 조건으로 다루므로
+// 같은 해석을 쓰는 "janggi" 를 씁니다. "janggimodern" 도 서브모듈에 있어서
+// 필요하면 이 상수만 바꾸면 됩니다.
+static constexpr const char* VARIANT_NAME = "janggi";
+
+const Variant* UciEngine::janggiVariant() {
+    auto it = variants.find(VARIANT_NAME);
+    if (it == variants.end()) {
+        LOGE("Variant not found: %s", VARIANT_NAME);
+        return nullptr;
+    }
+    return it->second;
+}
+
 bool UciEngine::initialize() {
     if (initialized) {
         LOGD("Engine already initialized");
         return true;
     }
 
-    // Get Janggi variant
-    auto variantIt = variants.find("janggi");
-    if (variantIt == variants.end()) {
-        LOGE("Janggi variant not found");
-        return false;
-    }
-    const Variant* janggiVariant = variantIt->second;
+    const Variant* variant = janggiVariant();
+    if (!variant) return false;
 
     // Initialize threads
     Options["Threads"] = std::string("1");
@@ -100,12 +109,12 @@ bool UciEngine::initialize() {
     mainThread = Threads.main();
 
     // Set variant
-    Options["UCI_Variant"] = std::string("janggi");
+    Options["UCI_Variant"] = std::string(VARIANT_NAME);
 
     // Create position with starting FEN
     states = StateListPtr(new std::deque<StateInfo>(1));
     position = new Position();
-    position->set(janggiVariant, janggiVariant->startFen, false, &states->back(), mainThread);
+    position->set(variant, variant->startFen, false, &states->back(), mainThread);
 
     initialized = true;
     LOGD("UCI Engine initialized for Janggi");
@@ -128,30 +137,40 @@ bool UciEngine::setPosition(const std::string& positionCommand) {
         return false;
     }
 
-    // Parse position command (e.g., "startpos" or "startpos moves a0b0 c1d2")
+    // "startpos [moves ...]" 또는 "fen <6개 필드> [moves ...]"
     std::istringstream iss(positionCommand);
     std::string token;
     iss >> token;
 
-    if (token != "startpos") {
-        LOGE("Only startpos supported currently");
+    const Variant* variant = janggiVariant();
+    if (!variant) return false;
+
+    std::string fen;
+    if (token == "startpos") {
+        fen = variant->startFen;
+        iss >> token;  // 다음 토큰이 있다면 "moves"
+    } else if (token == "fen") {
+        // FEN 은 공백으로 나뉜 6개 필드입니다. "moves" 가 나오면 거기서 멈춥니다.
+        for (int i = 0; i < 6 && iss >> token; ++i) {
+            if (token == "moves") break;
+            if (!fen.empty()) fen += ' ';
+            fen += token;
+        }
+        if (fen.empty()) {
+            LOGE("Empty FEN in position command");
+            return false;
+        }
+        if (token != "moves") iss >> token;
+    } else {
+        LOGE("Unknown position command: %s", token.c_str());
         return false;
     }
 
-    // Get Janggi variant
-    auto variantIt = variants.find("janggi");
-    if (variantIt == variants.end()) {
-        LOGE("Janggi variant not found");
-        return false;
-    }
-    const Variant* janggiVariant = variantIt->second;
-
-    // Reset to starting position
     states = StateListPtr(new std::deque<StateInfo>(1));
-    position->set(janggiVariant, janggiVariant->startFen, false, &states->back(), mainThread);
+    position->set(variant, fen, false, &states->back(), mainThread);
 
     // Check for moves
-    if (iss >> token && token == "moves") {
+    if (token == "moves") {
         while (iss >> token) {
             Move move = UCI::to_move(*position, token);
             if (move == MOVE_NONE) {

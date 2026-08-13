@@ -111,4 +111,14 @@ sealed class GameUiEvent {
      * Dismiss AI settings dialog.
      */
     data object DismissAiSettingsDialog : GameUiEvent()
+
+    /**
+     * User asked the engine to suggest a move.
+     */
+    data object RequestHint : GameUiEvent()
+
+    /**
+     * User dismissed the hint error message.
+     */
+    data object DismissHintError : GameUiEvent()
 }

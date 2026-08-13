@@ -1,6 +1,7 @@
 package com.example.janggi2.di
 
 import com.example.janggi2.data.ai.FairyStockfishEngine
+import com.example.janggi2.data.ai.FenConverter
 import com.example.janggi2.data.ai.NotationConverter
 import com.example.janggi2.data.ai.UciProtocol
 import com.example.janggi2.domain.ai.AiEngine
@@ -32,14 +33,23 @@ object AiModule {
     }
 
     /**
+     * Provides the FEN builder used to describe the board to the engine.
+     */
+    @Provides
+    @Singleton
+    fun provideFenConverter(): FenConverter {
+        return FenConverter()
+    }
+
+    /**
      * Provides the UCI protocol formatter.
      */
     @Provides
     @Singleton
     fun provideUciProtocol(
-        notationConverter: NotationConverter
+        fenConverter: FenConverter
     ): UciProtocol {
-        return UciProtocol(notationConverter)
+        return UciProtocol(fenConverter)
     }
 
     /**
