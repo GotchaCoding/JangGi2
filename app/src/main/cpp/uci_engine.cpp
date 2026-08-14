@@ -80,10 +80,10 @@ void UciEngine::initStockfish() {
     }
 }
 
-// 앱의 규칙 계층(CheckDetector/GameStatus)이 빅장을 종료 조건으로 다루므로
-// 같은 해석을 쓰는 "janggi" 를 씁니다. "janggimodern" 도 서브모듈에 있어서
-// 필요하면 이 상수만 바꾸면 됩니다.
-static constexpr const char* VARIANT_NAME = "janggi";
+// 앱은 빅장을 쓰지 않고 기물 점수로 승부를 가립니다. "janggimodern" 이 바로 그
+// 규칙입니다 — variant.cpp 의 janggi_modern_variant() 가 bikjangRule=false,
+// materialCounting=JANGGI_MATERIAL 이고, 주석에 카카오 장기 호환이라고 적혀 있습니다.
+static constexpr const char* VARIANT_NAME = "janggimodern";
 
 const Variant* UciEngine::janggiVariant() {
     auto it = variants.find(VARIANT_NAME);

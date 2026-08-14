@@ -6,7 +6,7 @@ import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 
 /**
- * Detects check, checkmate, and bikjang conditions in Janggi.
+ * Detects check and checkmate conditions in Janggi.
  */
 class CheckDetector {
     private val moveValidator = MoveValidator()
@@ -50,37 +50,6 @@ class CheckDetector {
 
         // Check if there are any legal moves that escape check
         return !hasLegalMoves(player, gameState)
-    }
-
-    /**
-     * Checks if the game is in bikjang (facing generals).
-     * Bikjang occurs when both Generals are on the same column with no pieces between them.
-     * This is an instant loss for the player who created this situation.
-     *
-     * @param gameState Current game state
-     * @return True if bikjang condition exists
-     */
-    fun isBikjang(gameState: GameState): Boolean {
-        val choGeneral = gameState.getGeneral(Player.CHO) ?: return false
-        val hanGeneral = gameState.getGeneral(Player.HAN) ?: return false
-
-        // Check if generals are in the same column
-        if (choGeneral.position.col != hanGeneral.position.col) {
-            return false
-        }
-
-        // Check if there are no pieces between the generals
-        val startRow = choGeneral.position.row + 1
-        val endRow = hanGeneral.position.row - 1
-        val col = choGeneral.position.col
-
-        for (row in startRow..endRow) {
-            if (gameState.getPieceAt(Position(col, row)) != null) {
-                return false // Piece blocking, not bikjang
-            }
-        }
-
-        return true // Generals facing with no pieces between
     }
 
     /**

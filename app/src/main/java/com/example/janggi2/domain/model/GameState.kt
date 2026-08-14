@@ -8,7 +8,13 @@ enum class GameStatus {
     CHECK,      // Current player's opponent is in check
     CHECKMATE,  // Game over - checkmate
     STALEMATE,  // Game over - stalemate (no legal moves)
-    BIKJANG     // Game over - bikjang (facing generals)
+
+    // 빅장 규칙은 제거됐지만 상수는 남깁니다. 저장된 대국이 이름으로 직렬화돼 있어
+    // (GameMapper 가 status.name / GameStatus.valueOf 를 씁니다) 지우면 옛 기록이 안 열립니다.
+    BIKJANG,
+
+    /** 외통 없이 끝나 기물 점수로 승부가 갈린 경우 */
+    POINT_WIN
 }
 
 /**
@@ -75,12 +81,14 @@ data class GameState(
         val capturedPiece = board[move.to]
         val moveRecord = move.copy(capturedPiece = capturedPiece)
 
-        return GameState(
+        // copy() 여야 합니다. 생성자를 부르면 undoStack·redoStack·gameMode·
+        // aiDifficulty·aiPlayer·복기 상태가 매 수마다 기본값으로 돌아가서,
+        // 되돌리기가 늘 비활성이 되고 AI 대국이 첫 수 뒤에 멈춥니다.
+        return copy(
             board = newBoard,
             currentPlayer = currentPlayer.opponent(),
-            moveHistory = moveHistory + moveRecord,
-            status = status, // Status will be updated by GameRules
-            winner = winner
+            moveHistory = moveHistory + moveRecord
+            // status/winner 는 GameRules 가 이어서 정합니다
         )
     }
 
@@ -95,12 +103,13 @@ data class GameState(
     fun getMoveCount(): Int = moveHistory.size
 
     /**
-     * Returns true if the game is over (checkmate, stalemate, or bikjang).
+     * Returns true if the game is over.
      */
     fun isGameOver(): Boolean = status in listOf(
         GameStatus.CHECKMATE,
         GameStatus.STALEMATE,
-        GameStatus.BIKJANG
+        GameStatus.BIKJANG,
+        GameStatus.POINT_WIN
     )
 
     /**
@@ -281,7 +290,7 @@ data class GameState(
 
 /**
  * Creates the initial game state with all pieces in starting positions.
- * Traditional Janggi starting position with 28 pieces (14 per player).
+ * Traditional Janggi starting position with 32 pieces (16 per player).
  *
  * @param gameMode Game mode (PvP or PvAI), defaults to PvP
  * @param aiDifficulty AI difficulty level (1-20), defaults to 10 (medium)

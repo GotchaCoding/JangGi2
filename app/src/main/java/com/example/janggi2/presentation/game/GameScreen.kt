@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -28,6 +29,8 @@ import com.example.janggi2.domain.model.Position
 import com.example.janggi2.presentation.common.ConfirmDialog
 import com.example.janggi2.presentation.game.components.AiSettingsDialog
 import com.example.janggi2.presentation.game.components.GameControls
+import com.example.janggi2.domain.rules.GameRules
+import com.example.janggi2.domain.rules.MaterialScore
 import com.example.janggi2.presentation.game.components.HighlightLayer
 import com.example.janggi2.presentation.game.components.JangGiBoard
 import com.example.janggi2.presentation.game.components.MoveHistoryPanel
@@ -66,21 +69,26 @@ fun GameScreen(
                 modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
             )
 
+            // 점수는 판에서 계산하므로 복기 중에도 그 시점 점수가 그대로 맞습니다.
+            val scoreboard = remember(uiState.gameState.board) {
+                MaterialScore.of(uiState.gameState)
+            }
+
             // Current player indicator or replay mode indicator
             if (uiState.gameState.isReplayMode) {
                 Text(
                     text = "복기 모드",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            } else {
-                TurnIndicator(
-                    currentPlayer = uiState.gameState.currentPlayer,
-                    moveCount = uiState.gameState.getMoveCount(),
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
+            TurnIndicator(
+                currentPlayer = uiState.gameState.currentPlayer,
+                moveCount = uiState.gameState.getMoveCount(),
+                scoreboard = scoreboard,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
 
             // Check status message
             if (uiState.gameState.status == GameStatus.CHECK) {
@@ -111,6 +119,7 @@ fun GameScreen(
             // 수 기록
             MoveHistoryPanel(
                 moves = uiState.gameState.moveHistory,
+                scoreboard = scoreboard,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
@@ -249,17 +258,27 @@ private fun getCheckPosition(gameState: com.example.janggi2.domain.model.GameSta
  * Gets the game over dialog title and message.
  */
 private fun getGameOverMessage(gameState: com.example.janggi2.domain.model.GameState): Pair<String, String> {
+    val winnerName = gameState.winner?.displayName() ?: "?"
     return when (gameState.status) {
         GameStatus.CHECKMATE -> {
-            val winnerName = gameState.winner?.displayName() ?: "?"
-            "게임 종료" to "$winnerName 승리!\n체크메이트로 게임이 끝났습니다."
+            "게임 종료" to "$winnerName 승리!\n외통으로 게임이 끝났습니다."
+        }
+        GameStatus.POINT_WIN -> {
+            val score = MaterialScore.of(gameState)
+            val reason = if (gameState.getMoveCount() >= GameRules.MOVE_LIMIT) {
+                "${GameRules.MOVE_LIMIT}수가 지나 점수로 가렸습니다."
+            } else {
+                "둘 수 있는 수가 없어 점수로 가렸습니다."
+            }
+            "게임 종료" to "$winnerName 승리!\n$reason\n" +
+                "초 ${formatScore(score.choScore)} : 한 ${formatScore(score.hanScore)}"
+        }
+        // 빅장 규칙은 없앴지만, 그 전에 저장된 대국은 이 상태로 열립니다.
+        GameStatus.BIKJANG -> {
+            "게임 종료" to "$winnerName 승리!\n빅장(맞장)으로 게임이 끝났습니다."
         }
         GameStatus.STALEMATE -> {
             "게임 종료" to "무승부\n더 이상 움직일 수 있는 수가 없습니다."
-        }
-        GameStatus.BIKJANG -> {
-            val winnerName = gameState.winner?.displayName() ?: "?"
-            "게임 종료" to "$winnerName 승리!\n빅장(맞장)으로 게임이 끝났습니다."
         }
         else -> "게임 종료" to "게임이 끝났습니다."
     }
@@ -340,3 +359,8 @@ fun GameScreenPreview() {
         GameScreen()
     }
 }
+
+/** 72.0 → "72", 73.5 → "73.5" */
+private fun formatScore(score: Double): String =
+    if (score % 1.0 == 0.0) score.toInt().toString()
+    else String.format(java.util.Locale.US, "%.1f", score)

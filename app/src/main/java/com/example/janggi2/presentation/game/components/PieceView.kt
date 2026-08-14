@@ -35,13 +35,13 @@ fun PieceView(
     fontSize: TextUnit = 24.sp
 ) {
     val backgroundColor = when (piece.player) {
-        Player.CHO -> Color(0xFFE3F2FD) // Light blue for Cho
-        Player.HAN -> Color(0xFFFCE4EC) // Light pink for Han
+        Player.CHO -> PlayerColors.background(Player.CHO)
+        Player.HAN -> PlayerColors.background(Player.HAN)
     }
 
     val textColor = when (piece.player) {
-        Player.CHO -> Color(0xFF1976D2) // Dark blue for Cho
-        Player.HAN -> Color(0xFFC2185B) // Dark pink for Han
+        Player.CHO -> PlayerColors.of(Player.CHO)
+        Player.HAN -> PlayerColors.of(Player.HAN)
     }
 
     Box(

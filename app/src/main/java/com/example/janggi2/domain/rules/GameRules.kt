@@ -10,6 +10,11 @@ import com.example.janggi2.domain.model.Position
  * Enforces all Janggi game rules including check, checkmate, and bikjang.
  */
 class GameRules {
+    companion object {
+        /** 이 수를 넘기면 기물 점수로 승부를 가립니다. */
+        const val MOVE_LIMIT = 200
+    }
+
     private val checkDetector = CheckDetector()
     private val moveValidator = MoveValidator()
 
@@ -50,11 +55,10 @@ class GameRules {
     /**
      * Evaluates the game status after a move.
      * Checks for:
-     * 1. Bikjang (instant loss for the player who created it)
-     * 2. Checkmate (win for the current player)
-     * 3. Stalemate (draw)
-     * 4. Check (ongoing with warning)
-     * 5. Normal ongoing game
+     * 1. Checkmate (win for the current player)
+     * 2. No legal moves, or the move limit - decided on material points
+     * 3. Check (ongoing with warning)
+     * 4. Normal ongoing game
      *
      * @param gameState The game state after a move
      * @return Updated game state with correct status and winner
@@ -73,20 +77,28 @@ class GameRules {
             return gameState.withStatus(GameStatus.CHECKMATE, newWinner = currentPlayer)
         }
 
-        // Check for bikjang (facing generals)
-        if (checkDetector.isBikjang(gameState)) {
-            // The player who just moved created bikjang and loses
-            return gameState.withStatus(GameStatus.BIKJANG, newWinner = currentPlayer)
-        }
+        // 빅장 규칙은 쓰지 않습니다. 궁이 마주 봐도 그대로 진행합니다.
 
         // Check if opponent is in checkmate
         if (checkDetector.isCheckmate(currentPlayer, gameState)) {
             return gameState.withStatus(GameStatus.CHECKMATE, newWinner = opponent)
         }
 
-        // Check if opponent is in stalemate
+        // 움직일 수 없는 경우. 장기는 한 수 쉼이 가능해 거의 나오지 않지만,
+        // 나온다면 무승부보다 점수로 가리는 쪽이 점수제에 맞습니다.
         if (checkDetector.isStalemate(currentPlayer, gameState)) {
-            return gameState.withStatus(GameStatus.STALEMATE, newWinner = null)
+            return gameState.withStatus(
+                GameStatus.POINT_WIN,
+                newWinner = MaterialScore.leader(gameState)
+            )
+        }
+
+        // 200수가 지나면 기물 점수로 승부를 가립니다.
+        if (gameState.moveHistory.size >= MOVE_LIMIT) {
+            return gameState.withStatus(
+                GameStatus.POINT_WIN,
+                newWinner = MaterialScore.leader(gameState)
+            )
         }
 
         // Check if opponent is in check
