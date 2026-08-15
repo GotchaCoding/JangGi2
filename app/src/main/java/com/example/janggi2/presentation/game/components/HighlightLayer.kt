@@ -21,18 +21,21 @@ import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Position
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.sin
 
+// 표시 크기는 칸 크기에 비례합니다. 고정 픽셀을 쓰면 기물보다 작아져서 가려집니다.
+private const val SELECTION_RADIUS = 0.50f   // 기물을 감싸는 크기
+private const val CHECK_RADIUS = 0.54f
+private const val HINT_RADIUS = 0.50f
+private const val VALID_MOVE_RADIUS = 0.16f
+
 /**
- * Overlay layer that renders selection highlight, valid move indicators, check warning,
- * and the AI hint arrow.
+ * 선택·이동 가능 위치·장군 표시를 그립니다. 기물 **아래** 층입니다.
  *
- * @param selectedPosition The currently selected piece position (highlighted in yellow)
- * @param validMoves List of valid move positions (shown as green circles)
- * @param checkPosition Position of General in check (shown with pulsing red border)
- * @param hintMove Move suggested by the engine (drawn as a blue arrow)
- * @param cellWidth Width of each board cell
- * @param cellHeight Height of each board cell
+ * @param selectedPosition 선택된 기물 위치 (노란 테두리)
+ * @param validMoves 갈 수 있는 위치 (초록 점)
+ * @param checkPosition 장군 맞은 궁의 위치 (빨간 테두리, 깜빡임)
  */
 @Composable
 fun HighlightLayer(
@@ -41,10 +44,8 @@ fun HighlightLayer(
     cellWidth: Dp,
     cellHeight: Dp,
     modifier: Modifier = Modifier,
-    checkPosition: Position? = null,
-    hintMove: Move? = null
+    checkPosition: Position? = null
 ) {
-    // Pulsing animation for check indicator
     val infiniteTransition = rememberInfiniteTransition(label = "checkPulse")
     val checkAlpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
@@ -57,136 +58,92 @@ fun HighlightLayer(
     )
 
     Canvas(modifier = modifier.fillMaxSize()) {
-        // Draw check indicator (pulsing red border)
-        checkPosition?.let { pos ->
-            drawCheckIndicator(pos, cellWidth.toPx(), cellHeight.toPx(), checkAlpha)
+        val cw = cellWidth.toPx()
+        val ch = cellHeight.toPx()
+        val unit = min(cw, ch)
+
+        checkPosition?.let {
+            drawCircle(
+                color = Color(0xFFF44336).copy(alpha = checkAlpha),
+                radius = unit * CHECK_RADIUS,
+                center = center(it, cw, ch),
+                style = Stroke(width = unit * 0.06f)
+            )
         }
 
-        // Draw the hint first so a selected piece stays visible on top of it
-        hintMove?.let { move ->
-            drawHintArrow(move, cellWidth.toPx(), cellHeight.toPx())
+        selectedPosition?.let {
+            drawCircle(
+                color = Color(0xFFFFEB3B),
+                radius = unit * SELECTION_RADIUS,
+                center = center(it, cw, ch),
+                style = Stroke(width = unit * 0.07f)
+            )
         }
 
-        // Draw selected piece highlight
-        selectedPosition?.let { pos ->
-            drawSelectionHighlight(pos, cellWidth.toPx(), cellHeight.toPx())
-        }
-
-        // Draw valid move indicators
-        validMoves.forEach { pos ->
-            drawValidMoveIndicator(pos, cellWidth.toPx(), cellHeight.toPx())
+        validMoves.forEach {
+            drawCircle(
+                color = Color(0xFF4CAF50).copy(alpha = 0.65f),
+                radius = unit * VALID_MOVE_RADIUS,
+                center = center(it, cw, ch)
+            )
         }
     }
 }
 
 /**
- * Draws a yellow border around the selected piece.
- */
-private fun DrawScope.drawSelectionHighlight(
-    position: Position,
-    cellWidth: Float,
-    cellHeight: Float
-) {
-    val centerX = position.col * cellWidth
-    val centerY = position.row * cellHeight
-
-    val highlightColor = Color(0xFFFFEB3B) // Yellow
-    val radius = 22f
-
-    drawCircle(
-        color = highlightColor,
-        radius = radius,
-        center = Offset(centerX, centerY),
-        style = Stroke(width = 4f)
-    )
-}
-
-/**
- * Draws a semi-transparent green circle for valid move positions.
- */
-private fun DrawScope.drawValidMoveIndicator(
-    position: Position,
-    cellWidth: Float,
-    cellHeight: Float
-) {
-    val centerX = position.col * cellWidth
-    val centerY = position.row * cellHeight
-
-    val indicatorColor = Color(0xFF4CAF50).copy(alpha = 0.5f) // Semi-transparent green
-    val radius = 12f
-
-    drawCircle(
-        color = indicatorColor,
-        radius = radius,
-        center = Offset(centerX, centerY)
-    )
-}
-
-/**
- * Draws the engine's suggested move: a ring on each end and an arrow between them.
+ * 엔진이 추천한 수를 화살표로 그립니다. 기물 **위** 층이라 가려지지 않습니다.
  *
- * 장기의 한 수 쉼은 출발과 도착이 같은 수로 표현되므로, 그 경우에는 길이 0인
- * 화살표 대신 링 하나만 그립니다.
+ * 장기의 한 수 쉼은 출발과 도착이 같으므로, 그때는 화살표 대신 링만 그립니다.
  */
-private fun DrawScope.drawHintArrow(
-    move: Move,
-    cellWidth: Float,
-    cellHeight: Float
+@Composable
+fun HintLayer(
+    hintMove: Move?,
+    cellWidth: Dp,
+    cellHeight: Dp,
+    modifier: Modifier = Modifier
 ) {
-    val hintColor = Color(0xFF2196F3) // Blue - 노랑(선택)/초록(이동)/빨강(장군)과 구분
-    val ringRadius = 24f
-    val headLength = 26f
-    val headAngle = 0.5f // radians
+    if (hintMove == null) return
 
-    val from = Offset(move.from.col * cellWidth, move.from.row * cellHeight)
-    val to = Offset(move.to.col * cellWidth, move.to.row * cellHeight)
+    Canvas(modifier = modifier.fillMaxSize()) {
+        val cw = cellWidth.toPx()
+        val ch = cellHeight.toPx()
+        val unit = min(cw, ch)
 
-    drawCircle(hintColor, ringRadius, from, style = Stroke(width = 5f))
+        val color = Color(0xFF2196F3) // 노랑(선택)·초록(이동)·빨강(장군)과 구분되는 파랑
+        val ring = unit * HINT_RADIUS
+        val stroke = unit * 0.07f
+        val from = center(hintMove.from, cw, ch)
+        val to = center(hintMove.to, cw, ch)
 
-    if (move.from == move.to) return
+        drawCircle(color, ring, from, style = Stroke(width = stroke))
+        if (hintMove.from == hintMove.to) return@Canvas
+        drawCircle(color, ring, to, style = Stroke(width = stroke))
 
-    drawCircle(hintColor, ringRadius, to, style = Stroke(width = 5f))
+        // 선은 양 끝 링 바깥에서 시작하고 끝내 링 안을 파고들지 않게 합니다.
+        val angle = atan2(to.y - from.y, to.x - from.x)
+        val start = Offset(from.x + cos(angle) * ring, from.y + sin(angle) * ring)
+        val end = Offset(to.x - cos(angle) * ring, to.y - sin(angle) * ring)
 
-    val angle = atan2(to.y - from.y, to.x - from.x)
-    // 양 끝의 링 안쪽으로 파고들지 않도록 선을 링 경계에서 시작하고 끝냅니다.
-    val start = Offset(from.x + cos(angle) * ringRadius, from.y + sin(angle) * ringRadius)
-    val end = Offset(to.x - cos(angle) * ringRadius, to.y - sin(angle) * ringRadius)
+        // 링끼리 붙어 있으면 화살표를 그릴 자리가 없습니다(옆칸으로 한 칸 이동 등).
+        val span = kotlin.math.hypot(end.x - start.x, end.y - start.y)
+        if (span < unit * 0.15f) return@Canvas
 
-    drawLine(hintColor, start, end, strokeWidth = 6f)
+        drawLine(color, start, end, strokeWidth = stroke)
 
-    drawLine(
-        hintColor,
-        end,
-        Offset(end.x - cos(angle - headAngle) * headLength, end.y - sin(angle - headAngle) * headLength),
-        strokeWidth = 6f
-    )
-    drawLine(
-        hintColor,
-        end,
-        Offset(end.x - cos(angle + headAngle) * headLength, end.y - sin(angle + headAngle) * headLength),
-        strokeWidth = 6f
-    )
+        val head = min(unit * 0.30f, span)
+        val spread = 0.5f
+        drawLine(
+            color, end,
+            Offset(end.x - cos(angle - spread) * head, end.y - sin(angle - spread) * head),
+            strokeWidth = stroke
+        )
+        drawLine(
+            color, end,
+            Offset(end.x - cos(angle + spread) * head, end.y - sin(angle + spread) * head),
+            strokeWidth = stroke
+        )
+    }
 }
 
-/**
- * Draws a pulsing red border for a General in check.
- */
-private fun DrawScope.drawCheckIndicator(
-    position: Position,
-    cellWidth: Float,
-    cellHeight: Float,
-    alpha: Float
-) {
-    val centerX = position.col * cellWidth
-    val centerY = position.row * cellHeight
-
-    val checkColor = Color(0xFFF44336).copy(alpha = alpha) // Pulsing red
-    val radius = 26f
-
-    drawCircle(
-        color = checkColor,
-        radius = radius,
-        center = Offset(centerX, centerY),
-        style = Stroke(width = 5f)
-    )
-}
+private fun center(position: Position, cellWidth: Float, cellHeight: Float) =
+    Offset(position.col * cellWidth, position.row * cellHeight)

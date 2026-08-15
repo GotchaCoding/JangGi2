@@ -192,8 +192,13 @@ std::string UciEngine::getBestMove(int thinkTimeMs) {
         return "";
     }
 
-    // Setup search limits
+    // Setup search limits.
+    // startTime 은 LimitsType 생성자가 초기화하지 않는 유일한 멤버라 반드시 넣어야
+    // 합니다. 원래 엔진은 UCI::go() 가 맨 먼저 넣어주는데 여기서는 그 경로를 타지
+    // 않습니다. 빠뜨리면 스택 쓰레기값이 들어가고, 그게 현재 시각보다 크면 경과
+    // 시간이 음수가 되어 movetime 을 영영 넘지 못해 탐색이 끝나지 않습니다.
     Search::LimitsType limits;
+    limits.startTime = now();
     limits.movetime = TimePoint(thinkTimeMs);
 
     // Start search

@@ -32,6 +32,7 @@ import com.example.janggi2.presentation.game.components.GameControls
 import com.example.janggi2.domain.rules.GameRules
 import com.example.janggi2.domain.rules.MaterialScore
 import com.example.janggi2.presentation.game.components.HighlightLayer
+import com.example.janggi2.presentation.game.components.HintLayer
 import com.example.janggi2.presentation.game.components.JangGiBoard
 import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
@@ -301,8 +302,17 @@ private fun BoardWithPieces(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        val boardWidth = maxWidth
-        val boardHeight = maxWidth / 0.9f // Maintain 9:10 aspect ratio
+        // 기물은 교차점 "위"에 놓이므로 가장자리 기물은 판 밖으로 절반이 나갑니다.
+        // 그만큼을 사방에 남겨두지 않으면 화면 끝에서 잘리고 아래 UI와 겹칩니다.
+        val overhang = PIECE_SIZE / 2
+
+        // 가로·세로 어느 쪽에도 넘치지 않도록 9:10 비율을 유지하면서 맞춥니다.
+        // 예전에는 너비만 보고 높이를 정해서 세로로 넘쳤습니다.
+        val boardWidth = minOf(
+            maxWidth - PIECE_SIZE,
+            (maxHeight - PIECE_SIZE) * BOARD_ASPECT
+        )
+        val boardHeight = boardWidth / BOARD_ASPECT
 
         // Calculate cell dimensions
         val cellWidth = boardWidth / 8f // 9 columns = 8 spaces
@@ -333,21 +343,26 @@ private fun BoardWithPieces(
                 validMoves = validMoves,
                 cellWidth = cellWidth,
                 cellHeight = cellHeight,
-                checkPosition = checkPosition,
-                hintMove = hintMove
+                checkPosition = checkPosition
             )
 
             // Draw all pieces
             pieces.forEach { (position, piece) ->
-                val offsetX = (position.col * cellWidth.value).dp - 20.dp // Center piece (piece size / 2)
-                val offsetY = (position.row * cellHeight.value).dp - 20.dp
-
                 PieceView(
                     piece = piece,
-                    modifier = Modifier
-                        .offset(x = offsetX, y = offsetY)
+                    modifier = Modifier.offset(
+                        x = (position.col * cellWidth.value).dp - overhang,
+                        y = (position.row * cellHeight.value).dp - overhang
+                    )
                 )
             }
+
+            // 힌트는 기물 위에 그려야 보입니다.
+            HintLayer(
+                hintMove = hintMove,
+                cellWidth = cellWidth,
+                cellHeight = cellHeight
+            )
         }
     }
 }
@@ -364,3 +379,9 @@ fun GameScreenPreview() {
 private fun formatScore(score: Double): String =
     if (score % 1.0 == 0.0) score.toInt().toString()
     else String.format(java.util.Locale.US, "%.1f", score)
+
+/** 기물 지름. [PieceView] 의 기본값과 같아야 합니다. */
+private val PIECE_SIZE = 40.dp
+
+/** 장기판 가로:세로 = 9:10 */
+private const val BOARD_ASPECT = 0.9f
