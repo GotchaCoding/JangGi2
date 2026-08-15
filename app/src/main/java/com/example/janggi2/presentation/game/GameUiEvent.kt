@@ -1,6 +1,7 @@
 package com.example.janggi2.presentation.game
 
 import com.example.janggi2.domain.model.GameMode
+import com.example.janggi2.domain.model.HorseElephantSetup
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 
@@ -99,7 +100,10 @@ sealed class GameUiEvent {
     data class StartNewGame(
         val gameMode: GameMode,
         val aiDifficulty: Int = 10,
-        val aiPlayer: Player = Player.HAN
+        /** 내가 잡을 진영. 판은 이쪽이 아래로 오게 돌아가고, AI 대국이면 AI 가 반대편입니다. */
+        val myPlayer: Player = Player.HAN,
+        val choSetup: HorseElephantSetup = HorseElephantSetup.defaultFor(Player.CHO),
+        val hanSetup: HorseElephantSetup = HorseElephantSetup.defaultFor(Player.HAN)
     ) : GameUiEvent()
 
     /**

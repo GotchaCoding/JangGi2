@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -26,6 +27,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
+import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.presentation.common.ConfirmDialog
 import com.example.janggi2.presentation.game.components.AiSettingsDialog
@@ -112,6 +114,9 @@ fun GameScreen(
                 onBoardTap = { position ->
                     viewModel.onEvent(GameUiEvent.BoardTapped(position))
                 },
+                // 고른 진영이 아래로 오게 돌립니다. 한은 원래 아래라 그대로입니다.
+                flipped = uiState.viewpoint == Player.CHO,
+                repetitionNotice = uiState.repetitionNotice,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -225,12 +230,14 @@ fun GameScreen(
     if (uiState.showNewGameDialog) {
         NewGameDialog(
             onDismiss = { viewModel.onEvent(GameUiEvent.DismissNewGameDialog) },
-            onStartGame = { mode, difficulty, player ->
+            onStartGame = { mode, difficulty, myPlayer, choSetup, hanSetup ->
                 viewModel.onEvent(
                     GameUiEvent.StartNewGame(
                         gameMode = mode,
                         aiDifficulty = difficulty,
-                        aiPlayer = player
+                        myPlayer = myPlayer,
+                        choSetup = choSetup,
+                        hanSetup = hanSetup
                     )
                 )
             }
@@ -295,6 +302,14 @@ private fun getGameOverMessage(gameState: com.example.janggi2.domain.model.GameS
 }
 
 /**
+ * 판을 돌려 볼 때 쓰는 좌표 변환.
+ *
+ * 180도 회전이라 자기 자신이 역변환입니다 - 그릴 때도 탭을 되돌릴 때도 같은 함수를 씁니다.
+ */
+private fun Position.oriented(flipped: Boolean): Position =
+    if (flipped) Position(BOARD_COLS - 1 - col, BOARD_ROWS - 1 - row) else this
+
+/**
  * Displays the board with all pieces positioned on it.
  */
 @Composable
@@ -305,7 +320,9 @@ private fun BoardWithPieces(
     onBoardTap: (Position) -> Unit,
     modifier: Modifier = Modifier,
     checkPosition: Position? = null,
-    hintMove: Move? = null
+    hintMove: Move? = null,
+    flipped: Boolean = false,
+    repetitionNotice: Boolean = false
 ) {
     BoxWithConstraints(
         modifier = modifier,
@@ -350,7 +367,8 @@ private fun BoardWithPieces(
                         val position = Position(col, row)
 
                         if (position.isValid()) {
-                            onBoardTap(position)
+                            // 그릴 때 돌렸으므로 되돌려서 실제 칸을 냅니다.
+                            onBoardTap(position.oriented(flipped))
                         }
                     }
                 },
@@ -362,32 +380,51 @@ private fun BoardWithPieces(
 
                 // Draw highlight layer (selection + valid moves + check indicator)
                 HighlightLayer(
-                    selectedPosition = selectedPiece?.position,
-                    validMoves = validMoves,
+                    selectedPosition = selectedPiece?.position?.oriented(flipped),
+                    validMoves = validMoves.map { it.oriented(flipped) },
                     cellWidth = cellWidth,
                     cellHeight = cellHeight,
-                    checkPosition = checkPosition
+                    checkPosition = checkPosition?.oriented(flipped)
                 )
 
                 // Draw all pieces
                 pieces.forEach { (position, piece) ->
+                    val shown = position.oriented(flipped)
                     PieceView(
                         piece = piece,
                         size = pieceSize,
                         fontSize = with(LocalDensity.current) { (pieceSize * 0.58f).toSp() },
                         modifier = Modifier.offset(
-                            x = (position.col * cellWidth.value).dp - overhang,
-                            y = (position.row * cellHeight.value).dp - overhang
+                            x = (shown.col * cellWidth.value).dp - overhang,
+                            y = (shown.row * cellHeight.value).dp - overhang
                         )
                     )
                 }
 
                 // 힌트는 기물 위에 그려야 보입니다.
                 HintLayer(
-                    hintMove = hintMove,
+                    hintMove = hintMove?.let {
+                        it.copy(from = it.from.oriented(flipped), to = it.to.oriented(flipped))
+                    },
                     cellWidth = cellWidth,
                     cellHeight = cellHeight
                 )
+            }
+
+            // 반복이라 막힌 자리를 눌렀을 때 잠깐 뜨는 알림. 판 위에 겹쳐 놓아
+            // 다른 요소를 밀어내지 않습니다 - 밀어냈다면 판이 줄었을 겁니다.
+            if (repetitionNotice) {
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        text = "반복수 자리입니다",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                    )
+                }
             }
         }
     }
@@ -415,3 +452,7 @@ private const val BOARD_ASPECT = 0.9f
 /** 9열이므로 칸 간격은 8개, 10행이므로 9개 */
 private const val COL_GAPS = 8f
 private const val ROW_GAPS = 9f
+
+/** 교차점 개수. 판을 돌릴 때 좌표를 뒤집는 데 씁니다. */
+private const val BOARD_COLS = 9
+private const val BOARD_ROWS = 10

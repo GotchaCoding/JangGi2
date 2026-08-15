@@ -8,6 +8,7 @@ import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
+import com.example.janggi2.domain.model.HorseElephantSetup
 import com.example.janggi2.domain.model.initialGameState
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.rules.CheckDetector
@@ -21,6 +22,8 @@ import com.example.janggi2.domain.usecase.LoadGameUseCase
 import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
 import com.example.janggi2.domain.usecase.SaveGameUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,7 +45,14 @@ data class GameUiState(
     /** 엔진이 추천한 수. 보드에 화살표로만 그리고, 두지는 않습니다. */
     val hint: Move? = null,
     val isHintLoading: Boolean = false,
-    val hintError: String? = null
+    val hintError: String? = null,
+    /** 반복이라 막힌 수를 두려 했을 때 잠깐 띄우는 알림 */
+    val repetitionNotice: Boolean = false,
+    /**
+     * 아래쪽에 놓고 보는 진영. 고른 쪽이 자기 앞에 오도록 판을 돌려 그립니다.
+     * 예전부터 한이 아래였으므로 그것이 기본입니다.
+     */
+    val viewpoint: Player = Player.HAN
 )
 
 /**
@@ -63,7 +73,13 @@ class GameViewModel @Inject constructor(
 ) : ViewModel() {
     companion object {
         private const val TAG = "GameViewModel"
+
+        /** 반복수 알림이 떠 있는 시간 */
+        private const val REPETITION_NOTICE_MS = 1000L
     }
+
+    /** 반복수 알림을 지우는 타이머. 연달아 눌렀을 때 갈아끼웁니다. */
+    private var repetitionNoticeJob: Job? = null
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
@@ -110,7 +126,9 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.StartNewGame -> startNewGame(
                 event.gameMode,
                 event.aiDifficulty,
-                event.aiPlayer
+                event.myPlayer,
+                event.choSetup,
+                event.hanSetup
             )
             is GameUiEvent.ShowAiSettingsDialog -> showAiSettingsDialog()
             is GameUiEvent.DismissAiSettingsDialog -> dismissAiSettingsDialog()
@@ -178,7 +196,17 @@ class GameViewModel @Inject constructor(
      * @param piece The piece to move
      * @param destination The destination position
      */
-    private fun executeMove(piece: Piece, destination: Position) {
+    /**
+     * @param blockRepetition 반복이 되는 자리면 두지 않고 알림만 띄울지. AI 수에는
+     *   끄는데, 막아 봐야 알릴 상대가 없고 대신 둘 수를 다시 고르는 길도 없어서 AI 가
+     *   그대로 멈춰 버리기 때문입니다. 엔진은 탐색에서 이미 반복을 비김·패로 치므로
+     *   굳이 고른 수라면 다른 선택지가 없었다는 뜻입니다.
+     */
+    private fun executeMove(
+        piece: Piece,
+        destination: Position,
+        blockRepetition: Boolean = true
+    ) {
         val currentState = _uiState.value
 
         // Push current state to undo stack before making move
@@ -191,6 +219,12 @@ class GameViewModel @Inject constructor(
             capturedPiece = gameStateWithUndo.getPieceAt(destination),
             movedPiece = piece
         )
+
+        // 반복이 되는 수는 그 자리에 둘 수 없습니다. 알림만 띄우고 선택은 살려 둡니다.
+        if (blockRepetition && gameRules.wouldRepeat(move, gameStateWithUndo)) {
+            showRepetitionNotice()
+            return
+        }
 
         // Apply the move with rule checking
         val newGameState = gameRules.applyMoveWithRules(move, gameStateWithUndo)
@@ -394,13 +428,18 @@ class GameViewModel @Inject constructor(
     private fun startNewGame(
         gameMode: GameMode,
         aiDifficulty: Int,
-        aiPlayer: Player
+        myPlayer: Player,
+        choSetup: HorseElephantSetup,
+        hanSetup: HorseElephantSetup
     ) {
         // Create new game state with specified settings
         val newGameState = initialGameState(
             gameMode = gameMode,
             aiDifficulty = aiDifficulty,
-            aiPlayer = aiPlayer
+            // 내가 잡은 진영의 반대편을 AI 가 맡습니다.
+            aiPlayer = myPlayer.opponent(),
+            choSetup = choSetup,
+            hanSetup = hanSetup
         )
 
         _uiState.value = GameUiState(
@@ -410,7 +449,9 @@ class GameViewModel @Inject constructor(
             showGameOverDialog = false,
             isLoading = false,
             showNewGameDialog = false,
-            showAiSettingsDialog = false
+            showAiSettingsDialog = false,
+            // 고른 진영이 자기 앞에 오도록 판을 돌립니다.
+            viewpoint = myPlayer
         )
 
         // Auto-save
@@ -610,7 +651,7 @@ class GameViewModel @Inject constructor(
 
                     if (piece != null) {
                         // Execute the AI move
-                        executeMove(piece, aiMove.to)
+                        executeMove(piece, aiMove.to, blockRepetition = false)
                     } else {
                         Log.e(TAG, "No piece found at AI move source position: ${aiMove.from}")
                     }
@@ -681,6 +722,13 @@ class GameViewModel @Inject constructor(
     private fun passTurn() {
         val currentState = _uiState.value
         val withUndo = currentState.gameState.pushToUndoStack()
+
+        // 판이 그대로여도 차례가 넘어가 국면이 되풀이될 수 있습니다.
+        if (gameRules.passWouldRepeat(withUndo)) {
+            showRepetitionNotice()
+            return
+        }
+
         val newGameState = gameRules.applyPass(withUndo) ?: return
 
         _uiState.value = currentState.copy(
@@ -699,6 +747,21 @@ class GameViewModel @Inject constructor(
 
     private fun dismissHintError() {
         _uiState.value = _uiState.value.copy(hintError = null)
+    }
+
+    /**
+     * "반복수 자리입니다" 알림을 1초 띄웠다 지웁니다.
+     *
+     * 이전 알림이 떠 있는 동안 또 누르면 그 타이머를 취소하고 다시 셉니다. 그러지
+     * 않으면 먼저 걸린 타이머가 새 알림을 일찍 지워 버립니다.
+     */
+    private fun showRepetitionNotice() {
+        repetitionNoticeJob?.cancel()
+        _uiState.value = _uiState.value.copy(repetitionNotice = true)
+        repetitionNoticeJob = viewModelScope.launch {
+            delay(REPETITION_NOTICE_MS)
+            _uiState.value = _uiState.value.copy(repetitionNotice = false)
+        }
     }
 
     /**

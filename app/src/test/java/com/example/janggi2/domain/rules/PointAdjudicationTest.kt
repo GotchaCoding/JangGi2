@@ -159,66 +159,59 @@ class PointAdjudicationTest {
         override fun judge(gameState: GameState) = outcome
     }
 
+    /** 초의 졸 한 칸. 어느 국면에서든 합법인 수라 반복 판정만 남습니다. */
+    private val soldierStep = Move(Position(0, 3), Position(0, 4))
+
     @Test
-    fun `repeating the same moves loses the game`() {
+    fun `a repeating move is refused instead of ending the game`() {
         val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
-        val state = initialGameState()  // 둘 차례는 초
+        val state = initialGameState()
 
-        val evaluated = rules.evaluateGameStatus(state)
-
-        assertEquals(GameStatus.FOUL_LOSS, evaluated.status)
-        assertTrue(evaluated.isGameOver())
-        assertEquals(Player.HAN, evaluated.winner)
+        assertTrue(rules.wouldRepeat(soldierStep, state))
+        // 반복은 승부를 가르지 않습니다 - 그 자리에 못 둘 뿐입니다.
+        assertEquals(GameStatus.ONGOING, rules.evaluateGameStatus(state).status)
     }
 
     @Test
-    fun `a repetition that ends in a draw is decided on points`() {
-        // 장기에 무승부는 두지 않기로 했으므로 점수제로 넘깁니다.
+    fun `every repetition verdict blocks the move`() {
+        // 비김이든 짐이든 이김이든, 반복이면 그 자리에는 두지 않습니다.
+        val blocking = listOf(
+            RepetitionOutcome.SIDE_TO_MOVE_LOSES,
+            RepetitionOutcome.SIDE_TO_MOVE_WINS,
+            RepetitionOutcome.DRAW
+        )
+        for (outcome in blocking) {
+            assertTrue("$outcome", GameRules(judgeOf(outcome)).wouldRepeat(soldierStep, initialGameState()))
+        }
+        assertFalse(GameRules(judgeOf(RepetitionOutcome.NONE)).wouldRepeat(soldierStep, initialGameState()))
+    }
+
+    @Test
+    fun `an illegal move is never reported as a repetition`() {
+        // 판정자에게 물어볼 것도 없이 어차피 못 두는 수입니다. 물어봤다면 엔진이
+        // 둘 수 없는 수를 재생하다 엉뚱한 답을 냈을 겁니다.
+        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
+        val choSoldierBackwards = Move(Position(0, 3), Position(0, 2))
+
+        assertFalse(rules.wouldRepeat(choSoldierBackwards, initialGameState()))
+    }
+
+    @Test
+    fun `a pass can be blocked as a repetition too`() {
+        // 판이 그대로여도 차례가 넘어가 국면이 되풀이될 수 있습니다.
         val rules = GameRules(judgeOf(RepetitionOutcome.DRAW))
 
-        val evaluated = rules.evaluateGameStatus(initialGameState())
-
-        assertEquals(GameStatus.POINT_WIN, evaluated.status)
-        assertEquals(Player.HAN, evaluated.winner)  // 초 72 : 한 73.5
+        assertTrue(rules.passWouldRepeat(initialGameState()))
     }
 
     @Test
-    fun `a foul outranks the move limit`() {
-        // 반복은 반칙이라 점수와 무관하게 승부가 갈립니다.
-        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
-        val state = initialGameState().copy(moveHistory = filler(GameRules.MOVE_LIMIT))
-
-        val evaluated = rules.evaluateGameStatus(state)
-
-        assertEquals(GameStatus.FOUL_LOSS, evaluated.status)
-    }
-
-    @Test
-    fun `checkmate outranks a repetition`() {
-        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
-        val state = GameState(
-            board = mapOf(
-                Position(4, 1) to Piece.General(Player.CHO, Position(4, 1)),
-                Position(4, 8) to Piece.General(Player.HAN, Position(4, 8)),
-                Position(3, 0) to Piece.Chariot(Player.HAN, Position(3, 0)),
-                Position(5, 0) to Piece.Chariot(Player.HAN, Position(5, 0)),
-                Position(3, 2) to Piece.Chariot(Player.HAN, Position(3, 2)),
-                Position(5, 2) to Piece.Chariot(Player.HAN, Position(5, 2)),
-                Position(4, 2) to Piece.Chariot(Player.HAN, Position(4, 2)),
-                Position(4, 0) to Piece.Chariot(Player.HAN, Position(4, 0))
-            ),
-            currentPlayer = Player.CHO
-        )
-
-        assertEquals(GameStatus.CHECKMATE, rules.evaluateGameStatus(state).status)
-    }
-
-    @Test
-    fun `without a judge the game runs exactly as before`() {
+    fun `without a judge nothing is ever a repetition`() {
         // 네이티브 없이 도는 단위 테스트와, 엔진 초기화 전을 위한 경로입니다.
-        val evaluated = GameRules().evaluateGameStatus(initialGameState())
+        val rules = GameRules()
 
-        assertEquals(GameStatus.ONGOING, evaluated.status)
+        assertFalse(rules.wouldRepeat(soldierStep, initialGameState()))
+        assertFalse(rules.passWouldRepeat(initialGameState()))
+        assertEquals(GameStatus.ONGOING, rules.evaluateGameStatus(initialGameState()).status)
     }
 
     @Test

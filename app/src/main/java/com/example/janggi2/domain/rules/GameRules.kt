@@ -97,21 +97,8 @@ class GameRules(private val repetition: RepetitionJudge? = null) {
             )
         }
 
-        // 장군 반복·수 반복. 판 하나로는 알 수 없어 엔진이 수순을 재생해 가립니다.
-        // 200수 판정보다 앞에 둡니다 - 반복은 반칙이라 점수와 무관하게 승부가 갈립니다.
-        when (repetition?.judge(gameState)) {
-            RepetitionOutcome.SIDE_TO_MOVE_LOSES ->
-                return gameState.withStatus(GameStatus.FOUL_LOSS, newWinner = opponent)
-            RepetitionOutcome.SIDE_TO_MOVE_WINS ->
-                return gameState.withStatus(GameStatus.FOUL_LOSS, newWinner = currentPlayer)
-            // 이 앱에는 무승부가 없으므로 점수제로 넘깁니다.
-            RepetitionOutcome.DRAW ->
-                return gameState.withStatus(
-                    GameStatus.POINT_WIN,
-                    newWinner = MaterialScore.leader(gameState)
-                )
-            RepetitionOutcome.NONE, null -> Unit
-        }
+        // 반복은 여기서 승부를 가르지 않습니다. 그 자리에 두는 것 자체를 막습니다
+        // ([wouldRepeat]) - 대국이 갑자기 끝나는 것보다 다른 수를 찾게 하는 쪽이 낫습니다.
 
         // 200수가 지나면 기물 점수로 승부를 가립니다.
         if (gameState.moveHistory.size >= MOVE_LIMIT) {
@@ -128,6 +115,32 @@ class GameRules(private val repetition: RepetitionJudge? = null) {
 
         // Game continues normally
         return gameState.withStatus(GameStatus.ONGOING, newWinner = null)
+    }
+
+    /**
+     * 이 수를 두면 반복이 되는지. 되면 그 자리에는 둘 수 없습니다.
+     *
+     * 장군 반복·수 반복은 판 하나로는 알 수 없어 [RepetitionJudge] 가 수순을 재생해
+     * 가립니다. 승패로 처리하지 않고 착수를 막는 쪽을 택했습니다.
+     *
+     * 실제로 두려 할 때만 부릅니다. 이동 가능 위치를 칠할 때마다 확인하면 수 하나당
+     * 네이티브 호출이 한 번씩 붙는데, 그만한 값을 하지 않습니다.
+     *
+     * @return 판정자가 없거나 엔진이 준비되지 않았으면 false (기존처럼 그냥 둡니다)
+     */
+    fun wouldRepeat(move: Move, gameState: GameState): Boolean {
+        val judge = repetition ?: return false
+        if (!isMoveLegal(move.from, move.to, gameState)) return false
+        return judge.judge(gameState.applyMove(move)) != RepetitionOutcome.NONE
+    }
+
+    /**
+     * 한 수 쉼이 반복이 되는지. 판은 그대로여도 차례가 넘어가 국면이 되풀이될 수 있습니다.
+     */
+    fun passWouldRepeat(gameState: GameState): Boolean {
+        val judge = repetition ?: return false
+        val pass = passMove(gameState) ?: return false
+        return judge.judge(gameState.applyMove(pass)) != RepetitionOutcome.NONE
     }
 
     /**
@@ -185,15 +198,16 @@ class GameRules(private val repetition: RepetitionJudge? = null) {
      * @return 적용된 상태, 쉴 수 없으면 null
      */
     fun applyPass(gameState: GameState): GameState? {
+        val pass = passMove(gameState) ?: return null
+        return evaluateGameStatus(gameState.applyMove(pass))
+    }
+
+    /** 한 수 쉼을 나타내는 수. 쉴 수 없으면 null 입니다. */
+    private fun passMove(gameState: GameState): Move? {
         if (!canPass(gameState)) return null
 
         val general = gameState.getGeneral(gameState.currentPlayer) ?: return null
-        val pass = Move(
-            from = general.position,
-            to = general.position,
-            movedPiece = general
-        )
-        return evaluateGameStatus(gameState.applyMove(pass))
+        return Move(from = general.position, to = general.position, movedPiece = general)
     }
 
     /**

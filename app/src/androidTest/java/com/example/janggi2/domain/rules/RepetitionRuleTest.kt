@@ -13,15 +13,17 @@ import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * 장군 반복·수 반복이 실제로 승부를 가르는지 확인합니다.
+ * 되풀이하는 수가 실제로 막히는지 확인합니다.
  *
  * 코틀린 규칙에는 이 개념이 없어서 엔진에 맡긴 유일한 판정입니다
  * (`janggimodern` 변형의 `perpetualCheckIllegal`·`moveRepetitionIllegal`).
@@ -49,53 +51,83 @@ class RepetitionRuleTest {
         if (engine.isReady()) engine.destroy()
     }
 
+    /** 초 궁 d2↔e2, 한 차 d6↔e6. 차는 옮길 때마다 장군을 부릅니다. */
+    private val cycle = listOf(
+        Move(Position(4, 1), Position(3, 1)),  // 초 궁 e2 - d2 (장군 피함)
+        Move(Position(4, 5), Position(3, 5)),  // 한 차 e6 - d6 (다시 장군)
+        Move(Position(3, 1), Position(4, 1)),  // 초 궁 d2 - e2
+        Move(Position(3, 5), Position(4, 5))   // 한 차 d6 - e6 (다시 장군)
+    )
+
     /**
-     * 한이 차로 장군을 계속 부르고 초의 궁은 궁성 안을 오갑니다.
+     * 같은 국면을 되풀이하는 수는 언젠가 막힙니다 - 지는 게 아니라 못 두는 것입니다.
      *
-     * 궁 e2, 궁 e9, 차 e6 만 있는 판입니다. 차가 d6↔e6 을 오가며 매번 장군을 부르고
-     * 초의 궁은 d2↔e2 로 피합니다. 장군을 반복해 부른 한이 반칙패해야 합니다.
+     * 궁 e2, 궁 e9, 차 e6 만 있는 판에서 양쪽이 제자리를 오갑니다.
      */
     @Test
-    fun `perpetual check loses the game for the side giving it`() {
+    fun `a repeating move eventually becomes unplayable`() {
         var state = perpetualCheckOpening()
-        val cycle = listOf(
-            Move(Position(4, 1), Position(3, 1)),  // 초 궁 e2 - d2 (장군 피함)
-            Move(Position(4, 5), Position(3, 5)),  // 한 차 e6 - d6 (다시 장군)
-            Move(Position(3, 1), Position(4, 1)),  // 초 궁 d2 - e2
-            Move(Position(3, 5), Position(4, 5))   // 한 차 d6 - e6 (다시 장군)
-        )
+        var blockedAt = -1
 
-        // 넉넉히 돌려 봅니다. 규칙이 살아 있으면 이 안에서 끝나야 합니다.
         for (ply in 0 until cycle.size * 6) {
-            val next = rules.applyMoveWithRules(cycle[ply % cycle.size], state)
+            val move = cycle[ply % cycle.size]
+
+            if (rules.wouldRepeat(move, state)) {
+                blockedAt = ply
+                break
+            }
+
+            val next = rules.applyMoveWithRules(move, state)
             assertNotNull("합법이어야 할 수가 거부됐습니다 (ply=$ply)", next)
             state = next!!
-
-            if (state.isGameOver()) break
         }
 
-        assertTrue("반복인데도 대국이 끝나지 않았습니다", state.isGameOver())
-        assertEquals(GameStatus.FOUL_LOSS, state.status)
-        assertEquals("장군을 반복한 한이 져야 합니다", Player.CHO, state.winner)
+        assertTrue("되풀이하는데도 끝까지 막히지 않았습니다", blockedAt >= 0)
+        // 막힐 뿐 대국은 계속됩니다.
+        assertFalse("반복은 승부를 가르지 않아야 합니다", state.isGameOver())
+        assertNotEquals(GameStatus.FOUL_LOSS, state.status)
     }
 
     @Test
-    fun `the same position without a judge just keeps going`() {
-        // 위 결과가 엔진에서 나온 것임을 못 박습니다 - 코틀린 규칙만으로는 안 끝납니다.
-        val plain = GameRules()
+    fun `blocking a repetition never leaves the player stuck`() {
+        // 막는 게 규칙이 되려면 둘 수 있는 다른 수가 남아야 합니다. 전부 막히면
+        // 대국자가 아무것도 못 하게 됩니다.
         var state = perpetualCheckOpening()
-        val cycle = listOf(
-            Move(Position(4, 1), Position(3, 1)),
-            Move(Position(4, 5), Position(3, 5)),
-            Move(Position(3, 1), Position(4, 1)),
-            Move(Position(3, 5), Position(4, 5))
-        )
 
         for (ply in 0 until cycle.size * 6) {
-            state = plain.applyMoveWithRules(cycle[ply % cycle.size], state) ?: break
+            val move = cycle[ply % cycle.size]
+
+            if (rules.wouldRepeat(move, state)) {
+                val playable = state.getPiecesForPlayer(state.currentPlayer)
+                    .flatMap { piece ->
+                        rules.getLegalMoves(piece.position, state)
+                            .map { Move(piece.position, it, movedPiece = piece) }
+                    }
+                    .filterNot { rules.wouldRepeat(it, state) }
+
+                assertTrue("한 수가 막혔는데 둘 수 있는 다른 수가 없습니다", playable.isNotEmpty())
+                return
+            }
+
+            state = rules.applyMoveWithRules(move, state) ?: break
         }
 
-        assertTrue("판정자 없이도 끝났다면 이 테스트의 전제가 틀린 것입니다", !state.isGameOver())
+        fail("되풀이하는데도 끝까지 막히지 않았습니다")
+    }
+
+    @Test
+    fun `nothing is ever blocked without a judge`() {
+        // 위 결과가 엔진에서 나온 것임을 못 박습니다 - 코틀린 규칙만으로는 안 막힙니다.
+        val plain = GameRules()
+        var state = perpetualCheckOpening()
+
+        for (ply in 0 until cycle.size * 6) {
+            val move = cycle[ply % cycle.size]
+            assertFalse("판정자 없이 막혔습니다 (ply=$ply)", plain.wouldRepeat(move, state))
+            state = plain.applyMoveWithRules(move, state) ?: break
+        }
+
+        assertFalse("판정자 없이 끝났다면 이 테스트의 전제가 틀린 것입니다", state.isGameOver())
     }
 
     /** 초 궁 e2, 한 궁 e9, 한 차 e6. 초가 둘 차례이며 장군을 맞은 상태입니다. */

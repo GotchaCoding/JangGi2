@@ -322,25 +322,26 @@ data class GameState(
  * @param gameMode Game mode (PvP or PvAI), defaults to PvP
  * @param aiDifficulty AI difficulty level (1-20), defaults to 10 (medium)
  * @param aiPlayer Which player the AI controls (CHO or HAN), defaults to HAN
+ * @param choSetup 초의 마·상 배치
+ * @param hanSetup 한의 마·상 배치
  */
 fun initialGameState(
     gameMode: GameMode = GameMode.PLAYER_VS_PLAYER,
     aiDifficulty: Int = 10,
-    aiPlayer: Player = Player.HAN
+    aiPlayer: Player = Player.HAN,
+    choSetup: HorseElephantSetup = HorseElephantSetup.defaultFor(Player.CHO),
+    hanSetup: HorseElephantSetup = HorseElephantSetup.defaultFor(Player.HAN)
 ): GameState {
     val pieces = mutableMapOf<Position, Piece>()
 
     // CHO (top player) pieces
-    // Back row (row 0): Chariot, Elephant, Horse, Guard, (empty), Guard, Elephant, Horse, Chariot
+    // Back row (row 0): Chariot, [마·상 4자리], Guard, (empty), Guard, ..., Chariot
     pieces[Position(0, 0)] = Piece.Chariot(Player.CHO, Position(0, 0))
-    pieces[Position(1, 0)] = Piece.Elephant(Player.CHO, Position(1, 0))
-    pieces[Position(2, 0)] = Piece.Horse(Player.CHO, Position(2, 0))
     pieces[Position(3, 0)] = Piece.Guard(Player.CHO, Position(3, 0))
     // Position(4, 0) empty
     pieces[Position(5, 0)] = Piece.Guard(Player.CHO, Position(5, 0))
-    pieces[Position(6, 0)] = Piece.Elephant(Player.CHO, Position(6, 0))
-    pieces[Position(7, 0)] = Piece.Horse(Player.CHO, Position(7, 0))
     pieces[Position(8, 0)] = Piece.Chariot(Player.CHO, Position(8, 0))
+    pieces.putAll(backRankHorsesAndElephants(Player.CHO, row = 0, setup = choSetup))
 
     // General (row 1, center)
     pieces[Position(4, 1)] = Piece.General(Player.CHO, Position(4, 1))
@@ -371,16 +372,13 @@ fun initialGameState(
     // General (row 8, center)
     pieces[Position(4, 8)] = Piece.General(Player.HAN, Position(4, 8))
 
-    // Back row (row 9): Chariot, Elephant, Horse, Guard, (empty), Guard, Elephant, Horse, Chariot
+    // Back row (row 9): Chariot, [마·상 4자리], Guard, (empty), Guard, ..., Chariot
     pieces[Position(0, 9)] = Piece.Chariot(Player.HAN, Position(0, 9))
-    pieces[Position(1, 9)] = Piece.Elephant(Player.HAN, Position(1, 9))
-    pieces[Position(2, 9)] = Piece.Horse(Player.HAN, Position(2, 9))
     pieces[Position(3, 9)] = Piece.Guard(Player.HAN, Position(3, 9))
     // Position(4, 9) empty
     pieces[Position(5, 9)] = Piece.Guard(Player.HAN, Position(5, 9))
-    pieces[Position(6, 9)] = Piece.Elephant(Player.HAN, Position(6, 9))
-    pieces[Position(7, 9)] = Piece.Horse(Player.HAN, Position(7, 9))
     pieces[Position(8, 9)] = Piece.Chariot(Player.HAN, Position(8, 9))
+    pieces.putAll(backRankHorsesAndElephants(Player.HAN, row = 9, setup = hanSetup))
 
     return GameState(
         board = pieces,
@@ -390,3 +388,14 @@ fun initialGameState(
         aiPlayer = aiPlayer
     )
 }
+
+/** 고른 배치대로 뒷줄 네 자리에 마와 상을 놓습니다. */
+private fun backRankHorsesAndElephants(
+    player: Player,
+    row: Int,
+    setup: HorseElephantSetup
+): Map<Position, Piece> =
+    setup.backRank(player).entries.associate { (col, isHorse) ->
+        val position = Position(col, row)
+        position to if (isHorse) Piece.Horse(player, position) else Piece.Elephant(player, position)
+    }
