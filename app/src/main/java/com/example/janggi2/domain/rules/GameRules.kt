@@ -8,8 +8,12 @@ import com.example.janggi2.domain.model.Position
 
 /**
  * Enforces all Janggi game rules including check, checkmate, and bikjang.
+ *
+ * @param repetition 장군 반복·수 반복 판정자. 판 하나로는 알 수 없어 엔진에 맡기는
+ *   유일한 규칙입니다. null 이면 반복 판정을 건너뜁니다 - 네이티브 라이브러리 없이
+ *   도는 단위 테스트와, 엔진 초기화가 끝나기 전을 위한 것입니다.
  */
-class GameRules {
+class GameRules(private val repetition: RepetitionJudge? = null) {
     companion object {
         /** 이 수를 넘기면 기물 점수로 승부를 가립니다. */
         const val MOVE_LIMIT = 200
@@ -91,6 +95,22 @@ class GameRules {
                 GameStatus.POINT_WIN,
                 newWinner = MaterialScore.leader(gameState)
             )
+        }
+
+        // 장군 반복·수 반복. 판 하나로는 알 수 없어 엔진이 수순을 재생해 가립니다.
+        // 200수 판정보다 앞에 둡니다 - 반복은 반칙이라 점수와 무관하게 승부가 갈립니다.
+        when (repetition?.judge(gameState)) {
+            RepetitionOutcome.SIDE_TO_MOVE_LOSES ->
+                return gameState.withStatus(GameStatus.FOUL_LOSS, newWinner = opponent)
+            RepetitionOutcome.SIDE_TO_MOVE_WINS ->
+                return gameState.withStatus(GameStatus.FOUL_LOSS, newWinner = currentPlayer)
+            // 이 앱에는 무승부가 없으므로 점수제로 넘깁니다.
+            RepetitionOutcome.DRAW ->
+                return gameState.withStatus(
+                    GameStatus.POINT_WIN,
+                    newWinner = MaterialScore.leader(gameState)
+                )
+            RepetitionOutcome.NONE, null -> Unit
         }
 
         // 200수가 지나면 기물 점수로 승부를 가립니다.

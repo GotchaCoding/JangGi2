@@ -149,3 +149,50 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
         return env->NewStringUTF("");
     }
 }
+
+JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGameOutcome(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jstring uciPosition) {
+
+    // 매 수마다 불리므로 성공 로그는 남기지 않습니다.
+    if (enginePtr == 0) {
+        LOGE("Null engine pointer in nativeGameOutcome");
+        return env->NewStringUTF("none");
+    }
+
+    try {
+        std::string positionStr = jstringToString(env, uciPosition);
+        UciEngine* engine = toEngine(enginePtr);
+        return env->NewStringUTF(engine->gameOutcome(positionStr).c_str());
+
+    } catch (const std::exception& e) {
+        LOGE("Exception in nativeGameOutcome: %s", e.what());
+        return env->NewStringUTF("none");
+    } catch (...) {
+        LOGE("Unknown exception in nativeGameOutcome");
+        return env->NewStringUTF("none");
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeLegalMoves(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jstring uciPosition) {
+
+    if (enginePtr == 0) {
+        LOGE("Null engine pointer in nativeLegalMoves");
+        return env->NewStringUTF("");
+    }
+
+    try {
+        std::string positionStr = jstringToString(env, uciPosition);
+        UciEngine* engine = toEngine(enginePtr);
+        return env->NewStringUTF(engine->legalMoves(positionStr).c_str());
+
+    } catch (const std::exception& e) {
+        LOGE("Exception in nativeLegalMoves: %s", e.what());
+        return env->NewStringUTF("");
+    } catch (...) {
+        LOGE("Unknown exception in nativeLegalMoves");
+        return env->NewStringUTF("");
+    }
+}

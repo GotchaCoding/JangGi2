@@ -14,7 +14,13 @@ enum class GameStatus {
     BIKJANG,
 
     /** 외통 없이 끝나 기물 점수로 승부가 갈린 경우 */
-    POINT_WIN
+    POINT_WIN,
+
+    /**
+     * 장군 반복·수 반복으로 반칙패. 판정은 엔진이 합니다 - [GameStatus.POINT_WIN] 때와
+     * 같이, 이 상수를 모르는 옛 빌드로 내려가면 GameMapper 의 valueOf 가 터집니다.
+     */
+    FOUL_LOSS
 }
 
 /**
@@ -33,7 +39,16 @@ data class GameState(
     val replayPosition: Int = 0,  // 0 = initial state, N = after N moves
     val gameMode: GameMode = GameMode.PLAYER_VS_PLAYER,
     val aiDifficulty: Int = 10,  // 1-20, default to medium difficulty
-    val aiPlayer: Player = Player.HAN  // Which player is AI (default: HAN)
+    val aiPlayer: Player = Player.HAN,  // Which player is AI (default: HAN)
+
+    /**
+     * 이 대국이 시작된 판. null 이면 표준 시작 배치입니다.
+     *
+     * 반복 규칙 판정에 필요합니다 - 엔진이 국면 이력을 거슬러 올라가려면 시작 국면부터
+     * [moveHistory] 를 재생해야 하는데, 사진에서 불러온 판은 표준 배치가 아닙니다.
+     * 시작 차례는 이 앱에서 언제나 초이므로 판만 있으면 충분합니다.
+     */
+    val startBoard: Map<Position, Piece>? = null
 ) {
     /**
      * Returns the piece at the given position, or null if empty.
@@ -120,7 +135,8 @@ data class GameState(
         GameStatus.CHECKMATE,
         GameStatus.STALEMATE,
         GameStatus.BIKJANG,
-        GameStatus.POINT_WIN
+        GameStatus.POINT_WIN,
+        GameStatus.FOUL_LOSS
     )
 
     /**

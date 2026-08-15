@@ -136,7 +136,12 @@ bool UciEngine::setPosition(const std::string& positionCommand) {
         LOGE("Engine not initialized");
         return false;
     }
+    return buildPosition(positionCommand, *position, states);
+}
 
+bool UciEngine::buildPosition(const std::string& positionCommand,
+                              Position& pos,
+                              StateListPtr& outStates) {
     // "startpos [moves ...]" 또는 "fen <6개 필드> [moves ...]"
     std::istringstream iss(positionCommand);
     std::string token;
@@ -166,24 +171,65 @@ bool UciEngine::setPosition(const std::string& positionCommand) {
         return false;
     }
 
-    states = StateListPtr(new std::deque<StateInfo>(1));
-    position->set(variant, fen, false, &states->back(), mainThread);
+    outStates = StateListPtr(new std::deque<StateInfo>(1));
+    pos.set(variant, fen, false, &outStates->back(), mainThread);
 
     // Check for moves
     if (token == "moves") {
         while (iss >> token) {
-            Move move = UCI::to_move(*position, token);
+            Move move = UCI::to_move(pos, token);
             if (move == MOVE_NONE) {
                 LOGE("Invalid move: %s", token.c_str());
                 return false;
             }
 
-            states->emplace_back();
-            position->do_move(move, states->back());
+            outStates->emplace_back();
+            pos.do_move(move, outStates->back());
         }
     }
 
     return true;
+}
+
+std::string UciEngine::gameOutcome(const std::string& positionCommand) {
+    if (!initialized) {
+        LOGE("Engine not initialized");
+        return "none";
+    }
+
+    Position pos;
+    StateListPtr localStates;
+    if (!buildPosition(positionCommand, pos, localStates)) return "none";
+
+    // is_immediate_game_end 는 변형이 그 자리에서 끝내는 경우(빅장 등),
+    // is_optional_game_end 는 장군 반복·수 반복·n-fold 를 봅니다
+    // (position.cpp 의 "n-fold repetition" 구간). janggimodern 은
+    // perpetualCheckIllegal·moveRepetitionIllegal 이 켜져 있습니다.
+    Value result = VALUE_DRAW;
+    if (!pos.is_immediate_game_end(result) && !pos.is_optional_game_end(result)) {
+        return "none";
+    }
+
+    if (result == VALUE_DRAW) return "draw";
+    return result > VALUE_DRAW ? "win" : "loss";
+}
+
+std::string UciEngine::legalMoves(const std::string& positionCommand) {
+    if (!initialized) {
+        LOGE("Engine not initialized");
+        return "";
+    }
+
+    Position pos;
+    StateListPtr localStates;
+    if (!buildPosition(positionCommand, pos, localStates)) return "";
+
+    std::string moves;
+    for (const auto& m : MoveList<LEGAL>(pos)) {
+        if (!moves.empty()) moves += ' ';
+        moves += UCI::move(pos, m);
+    }
+    return moves;
 }
 
 std::string UciEngine::getBestMove(int thinkTimeMs) {

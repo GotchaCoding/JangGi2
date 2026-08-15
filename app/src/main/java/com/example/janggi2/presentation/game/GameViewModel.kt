@@ -12,6 +12,7 @@ import com.example.janggi2.domain.model.initialGameState
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.rules.CheckDetector
 import com.example.janggi2.domain.rules.GameRules
+import com.example.janggi2.domain.rules.RepetitionJudge
 import com.example.janggi2.domain.ai.AiEngine
 import com.example.janggi2.domain.usecase.GetAiMoveUseCase
 import com.example.janggi2.domain.usecase.GetHintUseCase
@@ -57,7 +58,8 @@ class GameViewModel @Inject constructor(
     private val aiEngine: AiEngine,
     private val initializeAiUseCase: InitializeAiUseCase,
     private val getAiMoveUseCase: GetAiMoveUseCase,
-    private val getHintUseCase: GetHintUseCase
+    private val getHintUseCase: GetHintUseCase,
+    repetitionJudge: RepetitionJudge
 ) : ViewModel() {
     companion object {
         private const val TAG = "GameViewModel"
@@ -65,7 +67,7 @@ class GameViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
-    private val gameRules = GameRules()
+    private val gameRules = GameRules(repetitionJudge)
     private val checkDetector = CheckDetector()
 
     init {

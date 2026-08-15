@@ -4,6 +4,8 @@ import android.util.Log
 import com.example.janggi2.domain.ai.AiEngine
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.rules.RepetitionJudge
+import com.example.janggi2.domain.rules.RepetitionOutcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,7 +24,7 @@ import javax.inject.Singleton
 class FairyStockfishEngine @Inject constructor(
     private val notationConverter: NotationConverter,
     private val uciProtocol: UciProtocol
-) : AiEngine {
+) : AiEngine, RepetitionJudge {
 
     companion object {
         private const val TAG = "FairyStockfishEngine"
@@ -103,6 +105,48 @@ class FairyStockfishEngine @Inject constructor(
         }
     }
 
+    /**
+     * 장군 반복·수 반복 판정.
+     *
+     * 화면이 수를 둘 때마다 곧바로 답이 필요해 suspend 가 아닙니다. [mutex] 를 잡지 않는
+     * 것도 그래서인데, 안전한 이유가 있습니다 - 이 경로는 네이티브에서 **지역** Position
+     * 을 세워 답하고 버리므로 탐색이 쓰는 엔진 상태를 건드리지 않습니다.
+     * 수를 재생하는 비용뿐이라 200수를 다 채워도 1ms 아래입니다.
+     */
+    override fun judge(gameState: GameState): RepetitionOutcome {
+        // 초기화 전 몇 수는 판정이 꺼집니다. 반복은 최소 4반수 뒤에나 성립하므로
+        // 실제 대국에서 놓치는 경우는 없습니다.
+        if (!isInitialized) return RepetitionOutcome.NONE
+
+        return try {
+            when (val outcome = nativeGameOutcome(enginePtr, uciProtocol.formatHistory(gameState))) {
+                "loss" -> RepetitionOutcome.SIDE_TO_MOVE_LOSES
+                "win" -> RepetitionOutcome.SIDE_TO_MOVE_WINS
+                "draw" -> RepetitionOutcome.DRAW
+                "none" -> RepetitionOutcome.NONE
+                else -> {
+                    Log.w(TAG, "Unknown outcome from engine: $outcome")
+                    RepetitionOutcome.NONE
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error judging repetition", e)
+            RepetitionOutcome.NONE
+        }
+    }
+
+    /**
+     * 엔진이 보는 합법 수. **대조 테스트 전용**입니다 - 화면은 코틀린 규칙을 씁니다.
+     *
+     * @return UCI 표기 목록, 한 수 쉼(출발 == 도착)도 포함됩니다
+     */
+    fun legalMoves(gameState: GameState): List<String> {
+        if (!isInitialized) return emptyList()
+        return nativeLegalMoves(enginePtr, uciProtocol.formatPosition(gameState))
+            .split(' ')
+            .filter { it.isNotEmpty() }
+    }
+
     override fun destroy() {
         if (!isInitialized) {
             Log.w(TAG, "Attempted to destroy non-initialized engine")
@@ -130,4 +174,6 @@ class FairyStockfishEngine @Inject constructor(
     private external fun nativeSetDifficulty(enginePtr: Long, level: Int)
     private external fun nativeSetPosition(enginePtr: Long, uciPosition: String)
     private external fun nativeGetBestMove(enginePtr: Long, thinkTimeMs: Int): String
+    private external fun nativeGameOutcome(enginePtr: Long, uciPosition: String): String
+    private external fun nativeLegalMoves(enginePtr: Long, uciPosition: String): String
 }

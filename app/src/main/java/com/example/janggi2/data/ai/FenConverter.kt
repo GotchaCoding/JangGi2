@@ -30,22 +30,30 @@ class FenConverter @Inject constructor() {
     /**
      * @return e.g. "rbna1anbr/4k4/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/4K4/RBNA1ANBR w - - 0 1"
      */
-    fun toFen(gameState: GameState): String {
-        val placement = (ROWS - 1 downTo 0).joinToString("/") { row -> fenRow(gameState, row) }
-        val sideToMove = if (gameState.currentPlayer == Player.CHO) "w" else "b"
-        val fullMove = gameState.moveHistory.size / 2 + 1
+    fun toFen(gameState: GameState): String = toFen(
+        board = gameState.board,
+        sideToMove = gameState.currentPlayer,
+        fullMove = gameState.moveHistory.size / 2 + 1
+    )
+
+    /**
+     * 판만 가지고 FEN 을 만듭니다. 대국이 시작된 국면처럼 [GameState] 가 없는 판에 씁니다.
+     */
+    fun toFen(board: Map<Position, Piece>, sideToMove: Player, fullMove: Int): String {
+        val placement = (ROWS - 1 downTo 0).joinToString("/") { row -> fenRow(board, row) }
+        val side = if (sideToMove == Player.CHO) "w" else "b"
 
         // 캐슬링·앙파상 자리는 장기에서 의미가 없지만, Position::set 이 필드 개수를
         // 기대하므로 엔진의 startFen 과 같은 모양으로 채워 보냅니다.
-        return "$placement $sideToMove - - 0 $fullMove"
+        return "$placement $side - - 0 $fullMove"
     }
 
-    private fun fenRow(gameState: GameState, row: Int): String {
+    private fun fenRow(board: Map<Position, Piece>, row: Int): String {
         val sb = StringBuilder()
         var empty = 0
 
         for (col in 0 until COLS) {
-            val piece = gameState.getPieceAt(Position(col, row))
+            val piece = board[Position(col, row)]
 
             if (piece == null) {
                 empty++

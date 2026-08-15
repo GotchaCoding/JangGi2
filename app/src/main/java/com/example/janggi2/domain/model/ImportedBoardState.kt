@@ -34,7 +34,10 @@ data class ImportedBoardState(
             board = board,
             currentPlayer = Player.CHO,
             moveHistory = emptyList(),
-            status = GameStatus.ONGOING
+            status = GameStatus.ONGOING,
+            // 반복 규칙은 시작 국면부터 수순을 재생해야 가릴 수 있는데, 불러온 판은
+            // 표준 배치가 아니므로 여기가 그 시작입니다.
+            startBoard = board
         )
     }
 }

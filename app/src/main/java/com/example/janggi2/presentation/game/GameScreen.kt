@@ -279,6 +279,10 @@ private fun getGameOverMessage(gameState: com.example.janggi2.domain.model.GameS
             "게임 종료" to "$winnerName 승리!\n$reason\n" +
                 "초 ${formatScore(score.choScore)} : 한 ${formatScore(score.hanScore)}"
         }
+        GameStatus.FOUL_LOSS -> {
+            val loser = gameState.winner?.opponent()?.displayName() ?: "?"
+            "게임 종료" to "$winnerName 승리!\n${loser}이(가) 같은 수를 반복해 반칙패했습니다."
+        }
         // 빅장 규칙은 없앴지만, 그 전에 저장된 대국은 이 상태로 열립니다.
         GameStatus.BIKJANG -> {
             "게임 종료" to "$winnerName 승리!\n빅장(맞장)으로 게임이 끝났습니다."

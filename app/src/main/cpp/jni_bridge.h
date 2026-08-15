@@ -51,6 +51,26 @@ JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
     JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs);
 
+/**
+ * Judge repetition rules, which need the move history rather than just a board
+ * @param enginePtr Engine pointer
+ * @param uciPosition Same format as nativeSetPosition, moves included
+ * @return "none" | "win" | "loss" | "draw", from the side to move's point of view
+ */
+JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGameOutcome(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jstring uciPosition);
+
+/**
+ * List legal moves. Used by the test that cross-checks the Kotlin rules
+ * @param enginePtr Engine pointer
+ * @param uciPosition Same format as nativeSetPosition
+ * @return Space separated UCI moves, e.g. "a1a2 b1c3", or empty string on error
+ */
+JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeLegalMoves(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jstring uciPosition);
+
 #ifdef __cplusplus
 }
 #endif

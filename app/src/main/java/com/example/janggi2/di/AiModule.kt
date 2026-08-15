@@ -5,6 +5,7 @@ import com.example.janggi2.data.ai.FenConverter
 import com.example.janggi2.data.ai.NotationConverter
 import com.example.janggi2.data.ai.UciProtocol
 import com.example.janggi2.domain.ai.AiEngine
+import com.example.janggi2.domain.rules.RepetitionJudge
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -47,23 +48,35 @@ object AiModule {
     @Provides
     @Singleton
     fun provideUciProtocol(
-        fenConverter: FenConverter
+        fenConverter: FenConverter,
+        notationConverter: NotationConverter
     ): UciProtocol {
-        return UciProtocol(fenConverter)
+        return UciProtocol(fenConverter, notationConverter)
     }
 
     /**
-     * Provides the AI engine implementation.
+     * Provides the one and only native engine.
      *
-     * This is a singleton to ensure only one native engine instance exists.
+     * 이 앱의 네이티브 엔진은 하나뿐이어야 합니다. 아래 두 인터페이스는 **같은 인스턴스**를
+     * 가리키는 창구일 뿐입니다 - 각각 따로 provide 하면 네이티브 핸들이 둘 생깁니다.
      * The engine must be initialized before use via InitializeAiUseCase.
      */
     @Provides
     @Singleton
-    fun provideAiEngine(
+    fun provideFairyStockfishEngine(
         notationConverter: NotationConverter,
         uciProtocol: UciProtocol
-    ): AiEngine {
+    ): FairyStockfishEngine {
         return FairyStockfishEngine(notationConverter, uciProtocol)
     }
+
+    /** 탐색(AI 착수·힌트) 창구 */
+    @Provides
+    @Singleton
+    fun provideAiEngine(engine: FairyStockfishEngine): AiEngine = engine
+
+    /** 반복 규칙 판정 창구 */
+    @Provides
+    @Singleton
+    fun provideRepetitionJudge(engine: FairyStockfishEngine): RepetitionJudge = engine
 }

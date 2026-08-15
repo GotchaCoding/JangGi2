@@ -152,6 +152,75 @@ class PointAdjudicationTest {
         assertEquals(GameStatus.POINT_WIN, after.status)
     }
 
+    // ---------- 반복 규칙 (판정은 엔진이, 여기서는 배선만) ----------
+
+    /** 엔진 대역. 실제 반복 판정은 [RulesAgreementTest] 와 실기기에서 확인합니다. */
+    private fun judgeOf(outcome: RepetitionOutcome) = object : RepetitionJudge {
+        override fun judge(gameState: GameState) = outcome
+    }
+
+    @Test
+    fun `repeating the same moves loses the game`() {
+        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
+        val state = initialGameState()  // 둘 차례는 초
+
+        val evaluated = rules.evaluateGameStatus(state)
+
+        assertEquals(GameStatus.FOUL_LOSS, evaluated.status)
+        assertTrue(evaluated.isGameOver())
+        assertEquals(Player.HAN, evaluated.winner)
+    }
+
+    @Test
+    fun `a repetition that ends in a draw is decided on points`() {
+        // 장기에 무승부는 두지 않기로 했으므로 점수제로 넘깁니다.
+        val rules = GameRules(judgeOf(RepetitionOutcome.DRAW))
+
+        val evaluated = rules.evaluateGameStatus(initialGameState())
+
+        assertEquals(GameStatus.POINT_WIN, evaluated.status)
+        assertEquals(Player.HAN, evaluated.winner)  // 초 72 : 한 73.5
+    }
+
+    @Test
+    fun `a foul outranks the move limit`() {
+        // 반복은 반칙이라 점수와 무관하게 승부가 갈립니다.
+        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
+        val state = initialGameState().copy(moveHistory = filler(GameRules.MOVE_LIMIT))
+
+        val evaluated = rules.evaluateGameStatus(state)
+
+        assertEquals(GameStatus.FOUL_LOSS, evaluated.status)
+    }
+
+    @Test
+    fun `checkmate outranks a repetition`() {
+        val rules = GameRules(judgeOf(RepetitionOutcome.SIDE_TO_MOVE_LOSES))
+        val state = GameState(
+            board = mapOf(
+                Position(4, 1) to Piece.General(Player.CHO, Position(4, 1)),
+                Position(4, 8) to Piece.General(Player.HAN, Position(4, 8)),
+                Position(3, 0) to Piece.Chariot(Player.HAN, Position(3, 0)),
+                Position(5, 0) to Piece.Chariot(Player.HAN, Position(5, 0)),
+                Position(3, 2) to Piece.Chariot(Player.HAN, Position(3, 2)),
+                Position(5, 2) to Piece.Chariot(Player.HAN, Position(5, 2)),
+                Position(4, 2) to Piece.Chariot(Player.HAN, Position(4, 2)),
+                Position(4, 0) to Piece.Chariot(Player.HAN, Position(4, 0))
+            ),
+            currentPlayer = Player.CHO
+        )
+
+        assertEquals(GameStatus.CHECKMATE, rules.evaluateGameStatus(state).status)
+    }
+
+    @Test
+    fun `without a judge the game runs exactly as before`() {
+        // 네이티브 없이 도는 단위 테스트와, 엔진 초기화 전을 위한 경로입니다.
+        val evaluated = GameRules().evaluateGameStatus(initialGameState())
+
+        assertEquals(GameStatus.ONGOING, evaluated.status)
+    }
+
     @Test
     fun `a missing general still ends the game immediately`() {
         val state = initialGameState().let { s ->
