@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(fairystockfish_jni)
 
+# 엔진 소스는 서브모듈로 들어옵니다. 서브모듈 없이 클론하면 이 디렉터리가 통째로
+# 비는데, 그대로 두면 아래 GLOB 가 파일을 하나도 못 찾아 "no such file" 이 서른 번
+# 쏟아질 뿐 진짜 원인은 어디에도 안 나옵니다. 그래서 먼저 막고 할 일을 알려 줍니다.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/fairystockfish/src/bitboard.cpp")
+    message(FATAL_ERROR
+        "Fairy-Stockfish source is missing. This repository keeps it as a git submodule.\n"
+        "Run this from the project root:\n"
+        "    git submodule update --init --recursive\n"
+        "Or clone with the submodule in the first place:\n"
+        "    git clone --recurse-submodules <repo>")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -DUSE_POPCNT -DNO_PREFETCH")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
