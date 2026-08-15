@@ -40,6 +40,8 @@ fun GameControls(
     onDebugClick: () -> Unit = {},
     onHintClick: () -> Unit = {},
     isHintLoading: Boolean = false,
+    onPassClick: () -> Unit = {},
+    canPass: Boolean = false,
     isAiGame: Boolean = false,
     onShowAiSettings: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -70,6 +72,13 @@ fun GameControls(
                 enabled = canRedo
             ) {
                 Text("다시실행")
+            }
+
+            OutlinedButton(
+                onClick = onPassClick,
+                enabled = canPass
+            ) {
+                Text("한 수 쉼")
             }
 
             Button(

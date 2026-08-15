@@ -146,6 +146,37 @@ class GameRules {
     }
 
     /**
+     * 한 수 쉼을 둘 수 있는지.
+     *
+     * 엔진은 한 수 쉼을 궁 자리에서 같은 자리로 가는 수로 만들고(movegen.cpp
+     * "Passing move by king"), 다른 수와 똑같이 합법성 검사를 거칩니다. 판이
+     * 그대로이므로 장군을 맞은 상태에서는 그 장군이 풀리지 않아 걸러집니다.
+     * 즉 장군일 때는 쉴 수 없습니다.
+     */
+    fun canPass(gameState: GameState): Boolean {
+        if (!gameState.canPass()) return false
+        if (gameState.getGeneral(gameState.currentPlayer) == null) return false
+        return !checkDetector.isInCheck(gameState.currentPlayer, gameState)
+    }
+
+    /**
+     * 한 수 쉼을 둡니다. 판은 그대로 두고 차례만 넘깁니다.
+     *
+     * @return 적용된 상태, 쉴 수 없으면 null
+     */
+    fun applyPass(gameState: GameState): GameState? {
+        if (!canPass(gameState)) return null
+
+        val general = gameState.getGeneral(gameState.currentPlayer) ?: return null
+        val pass = Move(
+            from = general.position,
+            to = general.position,
+            movedPiece = general
+        )
+        return evaluateGameStatus(gameState.applyMove(pass))
+    }
+
+    /**
      * Simulates a move without modifying the game state.
      */
     private fun simulateMove(gameState: GameState, from: Position, to: Position): GameState {

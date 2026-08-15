@@ -77,8 +77,9 @@ data class GameState(
         val movedPiece = piece.moveTo(move.to)
         newBoard[move.to] = movedPiece
 
-        // Create move record with captured piece if any
-        val capturedPiece = board[move.to]
+        // 한 수 쉼은 출발과 도착이 같습니다. 그때 board[to] 는 자기 자신이라
+        // 그대로 두면 자기 기물을 잡은 것으로 기록됩니다.
+        val capturedPiece = if (move.from == move.to) null else board[move.to]
         val moveRecord = move.copy(capturedPiece = capturedPiece)
 
         // copy() 여야 합니다. 생성자를 부르면 undoStack·redoStack·gameMode·
@@ -105,6 +106,16 @@ data class GameState(
     /**
      * Returns true if the game is over.
      */
+    /**
+     * 한 수 쉼을 둘 수 있는지.
+     *
+     * status 가 CHECK 면 "둘 차례인 쪽이 장군을 맞은 상태"입니다
+     * (evaluateGameStatus 가 수를 둔 뒤 상대 기준으로 판정하므로).
+     * 엔진도 장군일 때는 한 수 쉼을 합법성 검사에서 걸러냅니다.
+     */
+    fun canPass(): Boolean =
+        !isGameOver() && !isReplayMode && status != GameStatus.CHECK
+
     fun isGameOver(): Boolean = status in listOf(
         GameStatus.CHECKMATE,
         GameStatus.STALEMATE,

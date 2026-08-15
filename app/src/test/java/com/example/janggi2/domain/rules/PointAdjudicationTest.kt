@@ -100,6 +100,58 @@ class PointAdjudicationTest {
         assertEquals(Player.HAN, evaluated.winner)
     }
 
+    // ---------- 한 수 쉼 ----------
+
+    @Test
+    fun `a pass hands the turn over without touching the board`() {
+        val state = initialGameState()
+
+        val after = rules.applyPass(state)!!
+
+        assertEquals(state.board, after.board)
+        assertEquals(Player.HAN, after.currentPlayer)
+        assertEquals(1, after.moveHistory.size)
+        assertTrue(after.moveHistory.single().isPass())
+        // 자기 궁을 잡은 것으로 기록되면 안 됩니다
+        assertEquals(null, after.moveHistory.single().capturedPiece)
+    }
+
+    @Test
+    fun `a pass does not change the score`() {
+        val state = initialGameState()
+        val before = MaterialScore.of(state)
+        val after = MaterialScore.of(rules.applyPass(state)!!)
+
+        assertEquals(before.choScore, after.choScore, 0.0)
+        assertEquals(before.hanScore, after.hanScore, 0.0)
+    }
+
+    @Test
+    fun `you cannot pass out of check`() {
+        // 엔진도 한 수 쉼을 다른 수와 같이 합법성 검사에 걸어서, 판이 그대로면
+        // 장군이 풀리지 않으므로 걸러냅니다.
+        val state = GameState(
+            board = mapOf(
+                Position(4, 1) to Piece.General(Player.CHO, Position(4, 1)),
+                Position(4, 8) to Piece.General(Player.HAN, Position(4, 8)),
+                Position(4, 4) to Piece.Chariot(Player.HAN, Position(4, 4))
+            ),
+            currentPlayer = Player.CHO
+        )
+
+        assertFalse(rules.canPass(state))
+        assertEquals(null, rules.applyPass(state))
+    }
+
+    @Test
+    fun `passing counts toward the move limit`() {
+        val state = initialGameState().copy(moveHistory = filler(GameRules.MOVE_LIMIT - 1))
+
+        val after = rules.applyPass(state)!!
+
+        assertEquals(GameStatus.POINT_WIN, after.status)
+    }
+
     @Test
     fun `a missing general still ends the game immediately`() {
         val state = initialGameState().let { s ->

@@ -114,6 +114,7 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.DismissAiSettingsDialog -> dismissAiSettingsDialog()
             is GameUiEvent.RequestHint -> requestHint()
             is GameUiEvent.DismissHintError -> dismissHintError()
+            is GameUiEvent.PassTurn -> passTurn()
         }
     }
 
@@ -668,6 +669,29 @@ class GameViewModel @Inject constructor(
             } finally {
                 _uiState.value = _uiState.value.copy(isHintLoading = false)
             }
+        }
+    }
+
+    /**
+     * 한 수 쉼. 판은 그대로 두고 차례만 넘깁니다.
+     * 장군을 맞은 상태에서는 [GameRules.canPass] 가 막습니다.
+     */
+    private fun passTurn() {
+        val currentState = _uiState.value
+        val withUndo = currentState.gameState.pushToUndoStack()
+        val newGameState = gameRules.applyPass(withUndo) ?: return
+
+        _uiState.value = currentState.copy(
+            gameState = newGameState,
+            selectedPiece = null,
+            validMoves = emptyList(),
+            hint = null,
+            showGameOverDialog = newGameState.isGameOver()
+        )
+        autoSave()
+
+        if (newGameState.isAiTurn() && !newGameState.isGameOver()) {
+            requestAiMove()
         }
     }
 

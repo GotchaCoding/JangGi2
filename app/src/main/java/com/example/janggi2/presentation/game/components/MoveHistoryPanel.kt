@@ -1,10 +1,12 @@
 package com.example.janggi2.presentation.game.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,6 +33,9 @@ import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.domain.rules.MaterialScoreboard
 import com.example.janggi2.ui.theme.JangGi2Theme
+
+/** 수가 있든 없든 같은 높이를 씁니다. */
+private val ROW_HEIGHT = 44.dp
 
 /**
  * 대국의 수 기록을 순서대로 보여줍니다. 새 수가 두어지면 끝으로 따라갑니다.
@@ -73,29 +78,36 @@ fun MoveHistoryPanel(
             CapturedStrip(scoreboard.hanCaptured, PlayerColors.of(Player.HAN))
         }
 
-        if (moves.isEmpty()) {
-            Text(
-                text = "아직 둔 수가 없습니다",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-            )
-            return@Column
-        }
-
-        LazyRow(
-            state = listState,
+        // 높이를 고정합니다. 첫 수를 두는 순간 이 영역이 커지면 보드가 weight 로
+        // 남은 높이를 쓰기 때문에 그만큼 줄어들어 판이 작아져 보입니다.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp)
+                .height(ROW_HEIGHT),
+            contentAlignment = Alignment.CenterStart
         ) {
-            itemsIndexed(moves) { index, move ->
-                MoveChip(
-                    number = index + 1,
-                    move = move,
-                    isLatest = index == moves.lastIndex
+            if (moves.isEmpty()) {
+                Text(
+                    text = "아직 둔 수가 없습니다",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp)
                 )
+            } else {
+                LazyRow(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    itemsIndexed(moves) { index, move ->
+                        MoveChip(
+                            number = index + 1,
+                            move = move,
+                            isLatest = index == moves.lastIndex
+                        )
+                    }
+                }
             }
         }
     }
@@ -152,6 +164,7 @@ private fun MoveChip(
  * 붙여 쓰지 않고 하이픈으로 나눕니다.
  */
 private fun describeMove(move: Move): String {
+    if (move.isPass()) return "한 수 쉼"
     val name = move.movedPiece?.getDisplayChar() ?: ""
     val captured = move.capturedPiece?.let { " x${it.getDisplayChar()}" } ?: ""
     return "$name ${coordinate(move.from)}→${coordinate(move.to)}$captured"

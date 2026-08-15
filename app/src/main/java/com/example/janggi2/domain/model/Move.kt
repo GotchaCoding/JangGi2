@@ -17,6 +17,11 @@ data class Move(
     fun isCapture(): Boolean = capturedPiece != null
 
     /**
+     * 한 수 쉼인지 여부. 엔진과 같은 표현으로, 출발과 도착이 같은 수입니다.
+     */
+    fun isPass(): Boolean = from == to
+
+    /**
      * Returns the distance moved in columns.
      */
     fun colDistance(): Int = kotlin.math.abs(to.col - from.col)

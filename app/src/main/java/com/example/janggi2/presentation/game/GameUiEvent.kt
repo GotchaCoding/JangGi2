@@ -121,4 +121,9 @@ sealed class GameUiEvent {
      * User dismissed the hint error message.
      */
     data object DismissHintError : GameUiEvent()
+
+    /**
+     * 한 수 쉼 - 판을 그대로 두고 차례만 넘깁니다.
+     */
+    data object PassTurn : GameUiEvent()
 }

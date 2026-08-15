@@ -158,6 +158,10 @@ fun GameScreen(
                     onHintClick = {
                         viewModel.onEvent(GameUiEvent.RequestHint)
                     },
+                    canPass = uiState.gameState.canPass(),
+                    onPassClick = {
+                        viewModel.onEvent(GameUiEvent.PassTurn)
+                    },
                     onUndoClick = {
                         viewModel.onEvent(GameUiEvent.Undo)
                     },
