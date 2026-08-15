@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -306,21 +307,25 @@ private fun BoardWithPieces(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        // 기물은 교차점 "위"에 놓이므로 가장자리 기물은 판 밖으로 절반이 나갑니다.
-        // 그만큼을 사방에 남겨두지 않으면 화면 끝에서 잘리고 아래 UI와 겹칩니다.
-        val overhang = PIECE_SIZE / 2
-
-        // 가로·세로 어느 쪽에도 넘치지 않도록 9:10 비율을 유지하면서 맞춥니다.
-        // 예전에는 너비만 보고 높이를 정해서 세로로 넘쳤습니다.
+        // 판 크기를 정합니다. 기물은 교차점 "위"에 놓이므로 가장자리 기물이 판 밖으로
+        // 절반 나가고, 그만큼 사방에 여백이 필요합니다. 기물 지름은 칸에 비례하므로
+        // 여백도 판 너비에 비례합니다 - 아래 계수는 그걸 정리한 값입니다.
+        //   칸 세로 = 판너비 / (9 * 0.9) 가 칸 가로보다 작으므로 이게 기준
+        //   여백 = 칸 * PIECE_TO_CELL / 2
+        val overhangFactor = PIECE_TO_CELL / 2f / (BOARD_ASPECT * ROW_GAPS)
         val boardWidth = minOf(
-            maxWidth - PIECE_SIZE,
-            (maxHeight - PIECE_SIZE) * BOARD_ASPECT
+            maxWidth / (1f + 2 * overhangFactor),
+            maxHeight / (1f / BOARD_ASPECT + 2 * overhangFactor)
         )
         val boardHeight = boardWidth / BOARD_ASPECT
 
         // Calculate cell dimensions
-        val cellWidth = boardWidth / 8f // 9 columns = 8 spaces
-        val cellHeight = boardHeight / 9f // 10 rows = 9 spaces
+        val cellWidth = boardWidth / COL_GAPS
+        val cellHeight = boardHeight / ROW_GAPS
+
+        // 칸보다 큰 기물을 그리면 서로 겹칩니다. 좁은 화면에서 특히 그렇습니다.
+        val pieceSize = minOf(cellWidth, cellHeight) * PIECE_TO_CELL
+        val overhang = pieceSize / 2
 
         Box(
             modifier = Modifier
@@ -354,6 +359,8 @@ private fun BoardWithPieces(
             pieces.forEach { (position, piece) ->
                 PieceView(
                     piece = piece,
+                    size = pieceSize,
+                    fontSize = with(LocalDensity.current) { (pieceSize * 0.58f).toSp() },
                     modifier = Modifier.offset(
                         x = (position.col * cellWidth.value).dp - overhang,
                         y = (position.row * cellHeight.value).dp - overhang
@@ -384,8 +391,12 @@ private fun formatScore(score: Double): String =
     if (score % 1.0 == 0.0) score.toInt().toString()
     else String.format(java.util.Locale.US, "%.1f", score)
 
-/** 기물 지름. [PieceView] 의 기본값과 같아야 합니다. */
-private val PIECE_SIZE = 40.dp
+/** 기물 지름을 칸 크기의 몇 배로 그릴지. 1 을 넘으면 이웃 기물과 겹칩니다. */
+private const val PIECE_TO_CELL = 0.92f
 
 /** 장기판 가로:세로 = 9:10 */
 private const val BOARD_ASPECT = 0.9f
+
+/** 9열이므로 칸 간격은 8개, 10행이므로 9개 */
+private const val COL_GAPS = 8f
+private const val ROW_GAPS = 9f

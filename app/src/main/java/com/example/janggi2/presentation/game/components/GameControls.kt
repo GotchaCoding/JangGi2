@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
@@ -23,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.janggi2.presentation.common.ConfirmDialog
+
+private val COMPACT_PADDING = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
 
 /**
  * Game control buttons (Undo, Redo, Save, Load, Reset)
@@ -55,35 +58,44 @@ fun GameControls(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Top row: Undo, Redo
+        // 대국 중 쓰는 버튼 네 개. 좁은 화면에서 마지막 버튼이 찌그러지지 않도록
+        // 각자 같은 너비를 갖고 안쪽 여백을 줄였습니다.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             OutlinedButton(
                 onClick = onUndoClick,
-                enabled = canUndo
+                enabled = canUndo,
+                modifier = Modifier.weight(1f),
+                contentPadding = COMPACT_PADDING
             ) {
-                Text("되돌리기")
+                Text("되돌리기", style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
 
             OutlinedButton(
                 onClick = onRedoClick,
-                enabled = canRedo
+                enabled = canRedo,
+                modifier = Modifier.weight(1f),
+                contentPadding = COMPACT_PADDING
             ) {
-                Text("다시실행")
+                Text("다시실행", style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
 
             OutlinedButton(
                 onClick = onPassClick,
-                enabled = canPass
+                enabled = canPass,
+                modifier = Modifier.weight(1f),
+                contentPadding = COMPACT_PADDING
             ) {
-                Text("한 수 쉼")
+                Text("한 수 쉼", style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
 
             Button(
                 onClick = onHintClick,
-                enabled = !isHintLoading
+                enabled = !isHintLoading,
+                modifier = Modifier.weight(1f),
+                contentPadding = COMPACT_PADDING
             ) {
                 if (isHintLoading) {
                     CircularProgressIndicator(
@@ -91,7 +103,7 @@ fun GameControls(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Text("AI 힌트")
+                    Text("AI 힌트", style = MaterialTheme.typography.labelLarge, maxLines = 1)
                 }
             }
         }
