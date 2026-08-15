@@ -327,53 +327,64 @@ private fun BoardWithPieces(
         val pieceSize = minOf(cellWidth, cellHeight) * PIECE_TO_CELL
         val overhang = pieceSize / 2
 
+        // 터치 영역은 판보다 여백만큼 넓혀야 합니다. 판 크기 그대로 두면 교차점 위에
+        // 걸쳐 놓인 가장자리 기물의 바깥쪽 절반이 영역 밖이라 눌리지 않습니다. 손가락
+        // 접점이 보이는 지점보다 조금 아래로 잡히는 탓에 맨 아랫줄이 특히 안 눌렸습니다.
         Box(
             modifier = Modifier
-                .size(width = boardWidth, height = boardHeight)
-                .pointerInput(Unit) {
+                .size(
+                    width = boardWidth + overhang * 2f,
+                    height = boardHeight + overhang * 2f
+                )
+                // 판 크기가 바뀌면 아래 계산도 다시 잡혀야 하므로 키로 넘깁니다.
+                .pointerInput(cellWidth, cellHeight, overhang) {
+                    val overhangPx = overhang.toPx()
                     detectTapGestures { offset ->
                         // Convert tap coordinates to board position
-                        val col = (offset.x / cellWidth.toPx()).roundToInt()
-                        val row = (offset.y / cellHeight.toPx()).roundToInt()
+                        val col = ((offset.x - overhangPx) / cellWidth.toPx()).roundToInt()
+                        val row = ((offset.y - overhangPx) / cellHeight.toPx()).roundToInt()
                         val position = Position(col, row)
 
                         if (position.isValid()) {
                             onBoardTap(position)
                         }
                     }
-                }
+                },
+            contentAlignment = Alignment.Center
         ) {
-            // Draw the board
-            JangGiBoard()
+            Box(modifier = Modifier.size(width = boardWidth, height = boardHeight)) {
+                // Draw the board
+                JangGiBoard()
 
-            // Draw highlight layer (selection + valid moves + check indicator)
-            HighlightLayer(
-                selectedPosition = selectedPiece?.position,
-                validMoves = validMoves,
-                cellWidth = cellWidth,
-                cellHeight = cellHeight,
-                checkPosition = checkPosition
-            )
+                // Draw highlight layer (selection + valid moves + check indicator)
+                HighlightLayer(
+                    selectedPosition = selectedPiece?.position,
+                    validMoves = validMoves,
+                    cellWidth = cellWidth,
+                    cellHeight = cellHeight,
+                    checkPosition = checkPosition
+                )
 
-            // Draw all pieces
-            pieces.forEach { (position, piece) ->
-                PieceView(
-                    piece = piece,
-                    size = pieceSize,
-                    fontSize = with(LocalDensity.current) { (pieceSize * 0.58f).toSp() },
-                    modifier = Modifier.offset(
-                        x = (position.col * cellWidth.value).dp - overhang,
-                        y = (position.row * cellHeight.value).dp - overhang
+                // Draw all pieces
+                pieces.forEach { (position, piece) ->
+                    PieceView(
+                        piece = piece,
+                        size = pieceSize,
+                        fontSize = with(LocalDensity.current) { (pieceSize * 0.58f).toSp() },
+                        modifier = Modifier.offset(
+                            x = (position.col * cellWidth.value).dp - overhang,
+                            y = (position.row * cellHeight.value).dp - overhang
+                        )
                     )
+                }
+
+                // 힌트는 기물 위에 그려야 보입니다.
+                HintLayer(
+                    hintMove = hintMove,
+                    cellWidth = cellWidth,
+                    cellHeight = cellHeight
                 )
             }
-
-            // 힌트는 기물 위에 그려야 보입니다.
-            HintLayer(
-                hintMove = hintMove,
-                cellWidth = cellWidth,
-                cellHeight = cellHeight
-            )
         }
     }
 }
