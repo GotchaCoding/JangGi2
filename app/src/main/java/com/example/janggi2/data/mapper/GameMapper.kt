@@ -27,6 +27,7 @@ class GameMapper {
     fun toEntity(gameState: GameState, name: String): GameEntity {
         val boardJson = serializeBoard(gameState.board)
         val moveHistoryJson = serializeMoveHistory(gameState.moveHistory)
+        val startBoardJson = gameState.startBoard?.let { serializeBoard(it) }
 
         return GameEntity(
             name = name,
@@ -36,7 +37,8 @@ class GameMapper {
             moveCount = gameState.getMoveCount(),
             gameStatus = gameState.status.name,
             winner = gameState.winner?.name,
-            moveHistoryJson = moveHistoryJson
+            moveHistoryJson = moveHistoryJson,
+            startBoardJson = startBoardJson
         )
     }
 
@@ -46,13 +48,15 @@ class GameMapper {
     fun fromEntity(entity: GameEntity): GameState {
         val board = deserializeBoard(entity.boardStateJson)
         val moveHistory = deserializeMoveHistory(entity.moveHistoryJson)
+        val startBoard = entity.startBoardJson?.let { deserializeBoard(it) }
 
         return GameState(
             board = board,
             currentPlayer = Player.valueOf(entity.currentPlayer),
             moveHistory = moveHistory,
             status = GameStatus.valueOf(entity.gameStatus),
-            winner = entity.winner?.let { Player.valueOf(it) }
+            winner = entity.winner?.let { Player.valueOf(it) },
+            startBoard = startBoard
         )
     }
 
