@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.model.MoveQuality
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
@@ -45,11 +46,13 @@ private val ROW_HEIGHT = 44.dp
  *
  * @param moves 지금까지의 수
  * @param scoreboard 잡은 기물 목록을 여기서 가져옵니다
+ * @param moveQualities AI 리뷰 결과. 인덱스가 [moves] 와 대응합니다(리뷰 전이면 빈 리스트).
  */
 @Composable
 fun MoveHistoryPanel(
     moves: List<Move>,
     scoreboard: MaterialScoreboard,
+    moveQualities: List<MoveQuality?> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -104,7 +107,8 @@ fun MoveHistoryPanel(
                         MoveChip(
                             number = index + 1,
                             move = move,
-                            isLatest = index == moves.lastIndex
+                            isLatest = index == moves.lastIndex,
+                            quality = moveQualities.getOrNull(index)
                         )
                     }
                 }
@@ -133,7 +137,8 @@ private fun CapturedStrip(captured: List<Piece>, color: Color) {
 private fun MoveChip(
     number: Int,
     move: Move,
-    isLatest: Boolean
+    isLatest: Boolean,
+    quality: MoveQuality? = null
 ) {
     val playerColor = when (move.movedPiece?.player) {
         Player.CHO -> PlayerColors.of(Player.CHO)
@@ -141,11 +146,8 @@ private fun MoveChip(
         null -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    Text(
-        text = "$number. ${describeMove(move)}",
-        style = MaterialTheme.typography.bodySmall,
-        fontWeight = if (isLatest) FontWeight.Bold else FontWeight.Normal,
-        color = playerColor,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .padding(end = 6.dp)
             .clip(RoundedCornerShape(6.dp))
@@ -154,6 +156,27 @@ private fun MoveChip(
                 else MaterialTheme.colorScheme.surface
             )
             .padding(horizontal = 8.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = "$number. ${describeMove(move)}",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (isLatest) FontWeight.Bold else FontWeight.Normal,
+            color = playerColor
+        )
+        MoveQualityBadge(quality)
+    }
+}
+
+/** GOOD·null 은 조용히 지나가고, 그 외 등급만 짧은 라벨로 표시합니다. */
+@Composable
+private fun MoveQualityBadge(quality: MoveQuality?) {
+    val label = quality?.let { MoveQualityLabels.shortLabel(it) } ?: return
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = MoveQualityLabels.color(quality),
+        modifier = Modifier.padding(start = 4.dp)
     )
 }
 

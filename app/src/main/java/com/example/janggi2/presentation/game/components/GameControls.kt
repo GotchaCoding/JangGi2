@@ -47,6 +47,9 @@ fun GameControls(
     canPass: Boolean = false,
     isAiGame: Boolean = false,
     onShowAiSettings: () -> Unit = {},
+    onReviewClick: () -> Unit = {},
+    isReviewLoading: Boolean = false,
+    canReview: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -123,6 +126,13 @@ fun GameControls(
 
             TextButton(onClick = onImportClick) {
                 Text("사진 불러오기")
+            }
+
+            TextButton(
+                onClick = onReviewClick,
+                enabled = canReview && !isReviewLoading
+            ) {
+                Text(if (isReviewLoading) "AI 리뷰 중..." else "AI 리뷰")
             }
 
             // AI settings button (only show when in AI game mode)

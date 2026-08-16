@@ -136,4 +136,19 @@ sealed class GameUiEvent {
      * 다르게 잡혔을 때 사용자가 직접 바로잡는 용도입니다.
      */
     data object FlipBoard : GameUiEvent()
+
+    /**
+     * 지금까지 둔 수를 AI로 리뷰합니다(최선수/좋음/부정확/실수/악수 판정).
+     */
+    data object RequestReview : GameUiEvent()
+
+    /**
+     * 진행 중인 AI 리뷰를 취소합니다.
+     */
+    data object CancelReview : GameUiEvent()
+
+    /**
+     * AI 리뷰 오류 메시지를 닫습니다.
+     */
+    data object DismissReviewError : GameUiEvent()
 }

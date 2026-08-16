@@ -30,6 +30,14 @@ interface AiEngine {
     suspend fun getBestMove(gameState: GameState, thinkTimeMs: Int = 2000, skillLevel: Int = 20): Move?
 
     /**
+     * Evaluates the given position - AI 리뷰가 국면마다 점수를 매길 때 씁니다.
+     * [getBestMove] 와 같은 탐색이지만 최선수뿐 아니라 점수도 돌려줍니다.
+     *
+     * @return null이면 합법수가 없는 국면(외통·궁이 없는 판 등)
+     */
+    suspend fun evaluate(gameState: GameState, thinkTimeMs: Int = 2000, skillLevel: Int = 20): Evaluation?
+
+    /**
      * Clean up engine resources.
      * Should be called when the engine is no longer needed.
      */
@@ -39,4 +47,24 @@ interface AiEngine {
      * Returns true if the engine is initialized and ready to use.
      */
     fun isReady(): Boolean
+}
+
+/**
+ * 국면 하나의 엔진 평가. [scoreCp] 는 언제나 "이 국면에서 둘 차례인 쪽" 관점입니다 -
+ * 양수면 그쪽이 유리, 음수면 불리. 졸(폰) 하나 ≈ 100.
+ *
+ * @param bestMove 엔진이 고른 최선수
+ * @param scoreCp 메이트 국면은 [MATE_CLAMP_CP] 로 눌러 담습니다 - 손실 계산에 그대로 써도
+ *   비정상적으로 큰 수가 나오지 않게 하려는 것입니다. 정확한 수는 [mateDistance] 로 압니다.
+ * @param mateDistance 메이트까지 남은 수. 양수면 이쪽이 외통을 부르는 쪽, 음수면 당하는 쪽.
+ */
+data class Evaluation(
+    val bestMove: Move?,
+    val scoreCp: Int,
+    val mateDistance: Int? = null
+) {
+    companion object {
+        /** 메이트 점수를 손실 계산에 쓸 수 있는 범위로 눌러 담는 값. */
+        const val MATE_CLAMP_CP = 3000
+    }
 }

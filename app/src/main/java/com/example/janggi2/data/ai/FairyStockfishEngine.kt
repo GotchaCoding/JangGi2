@@ -2,6 +2,7 @@ package com.example.janggi2.data.ai
 
 import android.util.Log
 import com.example.janggi2.domain.ai.AiEngine
+import com.example.janggi2.domain.ai.Evaluation
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.rules.RepetitionJudge
@@ -105,6 +106,60 @@ class FairyStockfishEngine @Inject constructor(
         }
     }
 
+    override suspend fun evaluate(
+        gameState: GameState,
+        thinkTimeMs: Int,
+        skillLevel: Int
+    ): Evaluation? {
+        require(skillLevel in 1..20) {
+            "Skill level must be between 1 and 20, got: $skillLevel"
+        }
+        checkInitialized()
+
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                try {
+                    nativeSetDifficulty(enginePtr, skillLevel)
+
+                    val position = uciProtocol.formatPosition(gameState)
+                    nativeSetPosition(enginePtr, position)
+
+                    val result = nativeGetBestMoveWithScore(enginePtr, thinkTimeMs)
+                    if (result.isEmpty()) {
+                        Log.w(TAG, "No evaluation returned from engine")
+                        return@withLock null
+                    }
+
+                    parseEvaluation(result, gameState)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error evaluating position", e)
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * "e1e2 cp45" / "e1e2 mate-3" 형식을 [Evaluation] 으로 바꿉니다.
+     */
+    private fun parseEvaluation(result: String, gameState: GameState): Evaluation? {
+        val spaceIndex = result.indexOf(' ')
+        if (spaceIndex < 0) return null
+
+        val uciMove = result.substring(0, spaceIndex)
+        val scorePart = result.substring(spaceIndex + 1)
+        val bestMove = notationConverter.uciToMove(uciMove, gameState)
+
+        return if (scorePart.startsWith("mate")) {
+            val mateDistance = scorePart.removePrefix("mate").toInt()
+            val scoreCp = if (mateDistance >= 0) Evaluation.MATE_CLAMP_CP else -Evaluation.MATE_CLAMP_CP
+            Evaluation(bestMove, scoreCp, mateDistance)
+        } else {
+            val scoreCp = scorePart.removePrefix("cp").toInt()
+            Evaluation(bestMove, scoreCp)
+        }
+    }
+
     /**
      * 장군 반복·수 반복 판정.
      *
@@ -174,6 +229,7 @@ class FairyStockfishEngine @Inject constructor(
     private external fun nativeSetDifficulty(enginePtr: Long, level: Int)
     private external fun nativeSetPosition(enginePtr: Long, uciPosition: String)
     private external fun nativeGetBestMove(enginePtr: Long, thinkTimeMs: Int): String
+    private external fun nativeGetBestMoveWithScore(enginePtr: Long, thinkTimeMs: Int): String
     private external fun nativeGameOutcome(enginePtr: Long, uciPosition: String): String
     private external fun nativeLegalMoves(enginePtr: Long, uciPosition: String): String
 }

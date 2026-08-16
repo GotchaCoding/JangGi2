@@ -297,9 +297,13 @@ data class GameState(
     /**
      * Reconstructs the game state at a specific position in move history.
      * Position 0 = initial state, N = after N moves applied.
+     *
+     * 사진 불러오기로 시작한 대국은 [startBoard] 가 표준 배치가 아니므로 거기서부터
+     * 다시 재생해야 합니다 - 그냥 [initialGameState] 에서 시작하면 복기·되돌리기·
+     * AI 리뷰가 모두 엉뚱한 판을 보게 됩니다.
      */
-    private fun reconstructStateAtPosition(position: Int): GameState {
-        var state = initialGameState()
+    internal fun reconstructStateAtPosition(position: Int): GameState {
+        var state = GameState(board = startBoard ?: initialGameState().board, currentPlayer = Player.CHO)
 
         // Apply moves up to the target position
         for (i in 0 until position.coerceAtMost(moveHistory.size)) {
@@ -310,7 +314,8 @@ data class GameState(
         return state.copy(
             moveHistory = this.moveHistory,
             isReplayMode = this.isReplayMode,
-            replayPosition = position
+            replayPosition = position,
+            startBoard = this.startBoard
         )
     }
 }

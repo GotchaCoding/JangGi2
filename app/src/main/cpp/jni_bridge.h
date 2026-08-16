@@ -52,6 +52,16 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
     JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs);
 
 /**
+ * Calculate best move together with its evaluation score, for AI review.
+ * @param enginePtr Engine pointer
+ * @param thinkTimeMs Time to think in milliseconds
+ * @return "<uci move> cp<n>" | "<uci move> mate<n>" | "" (no legal moves)
+ */
+JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMoveWithScore(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs);
+
+/**
  * Judge repetition rules, which need the move history rather than just a board
  * @param enginePtr Engine pointer
  * @param uciPosition Same format as nativeSetPosition, moves included
