@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Player
+import com.example.janggi2.presentation.common.swipeToGoBack
 
 /**
  * Screen for importing board positions from images.
@@ -66,6 +67,7 @@ fun ImportScreen(
     }
 
     Scaffold(
+        modifier = Modifier.swipeToGoBack(onNavigateBack),
         topBar = {
             TopAppBar(
                 title = { Text("사진에서 기보 불러오기") },

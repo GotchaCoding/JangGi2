@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.janggi2.presentation.common.swipeToGoBack
 
 /**
  * Screen displaying all saved games.
@@ -32,7 +33,9 @@ fun SavedGamesScreen(
     val savedGames by viewModel.savedGames.collectAsState()
 
     Scaffold(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .swipeToGoBack(onNavigateBack)
     ) { paddingValues ->
         Column(
             modifier = Modifier

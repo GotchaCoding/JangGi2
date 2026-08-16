@@ -81,6 +81,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.janggi2.data.imageprocessing.PieceDetector
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
+import com.example.janggi2.presentation.common.swipeToGoBack
 
 /**
  * 선 검출 디버그 화면
@@ -128,6 +129,7 @@ fun LineDetectionDebugScreen(
     }
 
     Scaffold(
+        modifier = Modifier.swipeToGoBack(onNavigateBack),
         topBar = {
             TopAppBar(
                 title = { Text("Line Detection Debug") },
