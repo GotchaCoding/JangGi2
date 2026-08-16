@@ -59,7 +59,7 @@ fun JangGiNavHost(
             // Check for imported game state from Import screen
             LaunchedEffect(backStackEntry) {
                 ImportStateHolder.pendingImportedGameState?.let { gameState ->
-                    viewModel.loadImportedGame(gameState)
+                    viewModel.loadImportedGame(gameState, ImportStateHolder.pendingImportedViewpoint)
                     ImportStateHolder.pendingImportedGameState = null
                 }
             }
@@ -108,9 +108,10 @@ fun JangGiNavHost(
 
         composable(Screen.Import.route) {
             ImportScreen(
-                onImportComplete = { gameState ->
+                onImportComplete = { gameState, viewpoint ->
                     // Store in temporary holder and navigate back
                     ImportStateHolder.pendingImportedGameState = gameState
+                    ImportStateHolder.pendingImportedViewpoint = viewpoint
                     navController.popBackStack()
                 },
                 onNavigateBack = {

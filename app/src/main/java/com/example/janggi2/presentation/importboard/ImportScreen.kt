@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.domain.model.Player
 
 /**
  * Screen for importing board positions from images.
@@ -44,7 +45,7 @@ import com.example.janggi2.domain.model.GameState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
-    onImportComplete: (GameState) -> Unit,
+    onImportComplete: (GameState, Player) -> Unit,
     onNavigateBack: () -> Unit,
     viewModel: ImportViewModel = hiltViewModel()
 ) {
@@ -60,7 +61,7 @@ fun ImportScreen(
     // Auto-navigate on successful import
     LaunchedEffect(uiState.importedGameState) {
         uiState.importedGameState?.let { gameState ->
-            onImportComplete(gameState)
+            onImportComplete(gameState, uiState.importedViewpoint)
         }
     }
 
