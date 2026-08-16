@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Position
@@ -44,7 +45,8 @@ fun HighlightLayer(
     cellWidth: Dp,
     cellHeight: Dp,
     modifier: Modifier = Modifier,
-    checkPosition: Position? = null
+    checkPosition: Position? = null,
+    origin: DpOffset = DpOffset.Zero
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "checkPulse")
     val checkAlpha by infiniteTransition.animateFloat(
@@ -61,12 +63,13 @@ fun HighlightLayer(
         val cw = cellWidth.toPx()
         val ch = cellHeight.toPx()
         val unit = min(cw, ch)
+        val o = Offset(origin.x.toPx(), origin.y.toPx())
 
         checkPosition?.let {
             drawCircle(
                 color = Color(0xFFF44336).copy(alpha = checkAlpha),
                 radius = unit * CHECK_RADIUS,
-                center = center(it, cw, ch),
+                center = center(it, cw, ch, o),
                 style = Stroke(width = unit * 0.06f)
             )
         }
@@ -75,7 +78,7 @@ fun HighlightLayer(
             drawCircle(
                 color = Color(0xFFFFEB3B),
                 radius = unit * SELECTION_RADIUS,
-                center = center(it, cw, ch),
+                center = center(it, cw, ch, o),
                 style = Stroke(width = unit * 0.07f)
             )
         }
@@ -84,7 +87,7 @@ fun HighlightLayer(
             drawCircle(
                 color = Color(0xFF4CAF50).copy(alpha = 0.65f),
                 radius = unit * VALID_MOVE_RADIUS,
-                center = center(it, cw, ch)
+                center = center(it, cw, ch, o)
             )
         }
     }
@@ -100,7 +103,8 @@ fun HintLayer(
     hintMove: Move?,
     cellWidth: Dp,
     cellHeight: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    origin: DpOffset = DpOffset.Zero
 ) {
     if (hintMove == null) return
 
@@ -108,12 +112,15 @@ fun HintLayer(
         val cw = cellWidth.toPx()
         val ch = cellHeight.toPx()
         val unit = min(cw, ch)
+        val o = Offset(origin.x.toPx(), origin.y.toPx())
 
-        val color = Color(0xFF2196F3) // 노랑(선택)·초록(이동)·빨강(장군)과 구분되는 파랑
+        // 알이 나무색이라 예전의 파랑은 눈에 덜 띕니다. 노랑(선택)·초록(이동)과도
+        // 구분되는 보라로 바꿨습니다.
+        val color = Color(0xFF7C4DFF)
         val ring = unit * HINT_RADIUS
         val stroke = unit * 0.07f
-        val from = center(hintMove.from, cw, ch)
-        val to = center(hintMove.to, cw, ch)
+        val from = center(hintMove.from, cw, ch, o)
+        val to = center(hintMove.to, cw, ch, o)
 
         drawCircle(color, ring, from, style = Stroke(width = stroke))
         if (hintMove.from == hintMove.to) return@Canvas
@@ -145,5 +152,6 @@ fun HintLayer(
     }
 }
 
-private fun center(position: Position, cellWidth: Float, cellHeight: Float) =
-    Offset(position.col * cellWidth, position.row * cellHeight)
+/** 격자의 왼쪽 위 [origin] 에서 잰 교차점 위치. 판 그림에는 격자 바깥 여백이 있습니다. */
+private fun center(position: Position, cellWidth: Float, cellHeight: Float, origin: Offset) =
+    Offset(origin.x + position.col * cellWidth, origin.y + position.row * cellHeight)
