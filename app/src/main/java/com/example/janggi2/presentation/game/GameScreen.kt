@@ -312,9 +312,11 @@ private fun Position.oriented(flipped: Boolean): Position =
 
 /**
  * Displays the board with all pieces positioned on it.
+ *
+ * 판을 돌려 보는 기능 때문에 탭 해석이 틀어지기 쉬워, 계측 테스트가 직접 부릅니다.
  */
 @Composable
-private fun BoardWithPieces(
+internal fun BoardWithPieces(
     pieces: Map<Position, Piece>,
     selectedPiece: Piece?,
     validMoves: List<Position>,
@@ -345,8 +347,11 @@ private fun BoardWithPieces(
         Box(
             modifier = Modifier
                 .size(width = boardWidth, height = boardHeight)
-                // 판 크기가 바뀌면 아래 계산도 다시 잡혀야 하므로 키로 넘깁니다.
-                .pointerInput(cell, gridOrigin) {
+                // 아래 블록은 키가 바뀔 때만 다시 만들어지고, 그 전까지는 처음 잡은 값을
+                // 계속 씁니다. 그래서 계산에 쓰는 값을 **빠짐없이** 키로 넘겨야 합니다.
+                // flipped 를 빠뜨렸다가, 판은 돌아갔는데 탭만 안 돌아가서 한 기물을
+                // 누르면 초 기물이 잡히는 버그가 났습니다.
+                .pointerInput(cell, gridOrigin, flipped) {
                     val cellPx = cell.toPx()
                     val originX = gridOrigin.x.toPx()
                     val originY = gridOrigin.y.toPx()
