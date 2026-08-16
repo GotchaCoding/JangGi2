@@ -130,4 +130,10 @@ sealed class GameUiEvent {
      * 한 수 쉼 - 판을 그대로 두고 차례만 넘깁니다.
      */
     data object PassTurn : GameUiEvent()
+
+    /**
+     * 판을 위아래로 뒤집어 봅니다. 불러오기·복기처럼 viewpoint 가 실제 앉은 쪽과
+     * 다르게 잡혔을 때 사용자가 직접 바로잡는 용도입니다.
+     */
+    data object FlipBoard : GameUiEvent()
 }

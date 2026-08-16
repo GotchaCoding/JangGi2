@@ -4,19 +4,27 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -24,6 +32,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
@@ -88,21 +97,33 @@ fun GameScreen(
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
-            TurnIndicator(
-                currentPlayer = uiState.gameState.currentPlayer,
-                moveCount = uiState.gameState.getMoveCount(),
-                scoreboard = scoreboard,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            // Check status message
-            if (uiState.gameState.status == GameStatus.CHECK) {
-                Text(
-                    text = "⚠️ 장군!",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 8.dp)
+            ) {
+                TurnIndicator(
+                    currentPlayer = uiState.gameState.currentPlayer,
+                    moveCount = uiState.gameState.getMoveCount(),
+                    scoreboard = scoreboard
                 )
+                // 불러오기·복기는 앉은 쪽과 무관하게 늘 한이 아래로 뜨므로, 실제와
+                // 다르면 직접 뒤집어 볼 수 있게 둡니다.
+                IconButton(onClick = { viewModel.onEvent(GameUiEvent.FlipBoard) }) {
+                    Icon(imageVector = Icons.Default.SwapVert, contentDescription = "판 뒤집기")
+                }
+            }
+
+            // 장군 상태에 들어갈 때마다 1초만 판 위에 띄우고 사라지는 알림.
+            // 판 바깥에 두면 그만큼 판이 줄어들어, 판 위에 겹쳐 그립니다.
+            var showCheckBanner by remember { mutableStateOf(false) }
+            LaunchedEffect(uiState.gameState) {
+                if (uiState.gameState.status == GameStatus.CHECK) {
+                    showCheckBanner = true
+                    delay(1000)
+                    showCheckBanner = false
+                } else {
+                    showCheckBanner = false
+                }
             }
 
             // Board with pieces
@@ -118,6 +139,7 @@ fun GameScreen(
                 // 고른 진영이 아래로 오게 돌립니다. 한은 원래 아래라 그대로입니다.
                 flipped = uiState.viewpoint == Player.CHO,
                 repetitionNotice = uiState.repetitionNotice,
+                checkNotice = showCheckBanner,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -325,7 +347,8 @@ internal fun BoardWithPieces(
     checkPosition: Position? = null,
     hintMove: Move? = null,
     flipped: Boolean = false,
-    repetitionNotice: Boolean = false
+    repetitionNotice: Boolean = false,
+    checkNotice: Boolean = false
 ) {
     BoxWithConstraints(
         modifier = modifier,
@@ -423,6 +446,22 @@ internal fun BoardWithPieces(
                         text = "반복수 자리입니다",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                    )
+                }
+            }
+
+            // 장군 알림도 같은 이유로 판 위에 겹쳐 그립니다 - 판 바깥에 자리를
+            // 잡으면 그 높이만큼 판이 줄어듭니다.
+            if (checkNotice) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        text = "⚠️ 장군!",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp)
                     )
                 }
             }
