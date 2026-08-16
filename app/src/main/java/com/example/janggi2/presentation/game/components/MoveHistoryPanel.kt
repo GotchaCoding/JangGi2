@@ -1,6 +1,8 @@
 package com.example.janggi2.presentation.game.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,20 +10,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,31 +34,33 @@ import com.example.janggi2.domain.model.Position
 import com.example.janggi2.domain.rules.MaterialScoreboard
 import com.example.janggi2.ui.theme.JangGi2Theme
 
-/** 수가 있든 없든 같은 높이를 씁니다. */
-private val ROW_HEIGHT = 44.dp
-
 /**
- * 대국의 수 기록을 순서대로 보여줍니다. 새 수가 두어지면 끝으로 따라갑니다.
+ * 대국의 수 기록을 세로로 스크롤되는 목록으로 보여줍니다. 각 줄을 누르면 그 수를 둔
+ * 직후 국면으로 판이 바뀝니다.
  *
- * 헤더 줄에는 서로 잡은 기물을 함께 놓습니다. 그 줄은 원래 라벨 하나만 쓰고 있어서
- * 세로 공간이 늘지 않고, 보드가 남는 높이를 다 쓰는 화면이라 그게 중요합니다.
+ * 헤더 줄에는 서로 잡은 기물을 함께 놓습니다.
  *
  * @param moves 지금까지의 수
  * @param scoreboard 잡은 기물 목록을 여기서 가져옵니다
  * @param moveQualities AI 리뷰 결과. 인덱스가 [moves] 와 대응합니다(리뷰 전이면 빈 리스트).
+ * @param currentPosition 지금 판에 보이는 위치(둔 수의 개수 - 복기 중이면 그 자리, 아니면
+ *   전체 수). 이 위치에 해당하는 줄을 강조합니다.
+ * @param onMoveClick 줄을 눌렀을 때. 0부터 시작하는 [moves] 인덱스를 넘깁니다.
  */
 @Composable
 fun MoveHistoryPanel(
     moves: List<Move>,
     scoreboard: MaterialScoreboard,
     moveQualities: List<MoveQuality?> = emptyList(),
+    currentPosition: Int = moves.size,
+    onMoveClick: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
 
-    LaunchedEffect(moves.size) {
+    LaunchedEffect(currentPosition) {
         if (moves.isNotEmpty()) {
-            listState.animateScrollToItem(moves.size - 1)
+            listState.animateScrollToItem((currentPosition - 1).coerceIn(0, moves.lastIndex))
         }
     }
 
@@ -67,7 +68,7 @@ fun MoveHistoryPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -81,36 +82,31 @@ fun MoveHistoryPanel(
             CapturedStrip(scoreboard.hanCaptured, PlayerColors.of(Player.HAN))
         }
 
-        // 높이를 고정합니다. 첫 수를 두는 순간 이 영역이 커지면 보드가 weight 로
-        // 남은 높이를 쓰기 때문에 그만큼 줄어들어 판이 작아져 보입니다.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(ROW_HEIGHT),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            if (moves.isEmpty()) {
+        if (moves.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
                 Text(
                     text = "아직 둔 수가 없습니다",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
-                LazyRow(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    itemsIndexed(moves) { index, move ->
-                        MoveChip(
-                            number = index + 1,
-                            move = move,
-                            isLatest = index == moves.lastIndex,
-                            quality = moveQualities.getOrNull(index)
-                        )
-                    }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f)
+            ) {
+                itemsIndexed(moves) { index, move ->
+                    MoveRow(
+                        number = index + 1,
+                        move = move,
+                        isCurrent = index + 1 == currentPosition,
+                        quality = moveQualities.getOrNull(index),
+                        onClick = { onMoveClick(index) }
+                    )
                 }
             }
         }
@@ -134,11 +130,12 @@ private fun CapturedStrip(captured: List<Piece>, color: Color) {
 }
 
 @Composable
-private fun MoveChip(
+private fun MoveRow(
     number: Int,
     move: Move,
-    isLatest: Boolean,
-    quality: MoveQuality? = null
+    isCurrent: Boolean,
+    quality: MoveQuality?,
+    onClick: () -> Unit
 ) {
     val playerColor = when (move.movedPiece?.player) {
         Player.CHO -> PlayerColors.of(Player.CHO)
@@ -148,19 +145,20 @@ private fun MoveChip(
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
-            .padding(end = 6.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .fillMaxWidth()
             .background(
-                if (isLatest) MaterialTheme.colorScheme.surfaceVariant
-                else MaterialTheme.colorScheme.surface
+                if (isCurrent) MaterialTheme.colorScheme.surfaceVariant
+                else Color.Transparent
             )
-            .padding(horizontal = 8.dp, vertical = 10.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Text(
             text = "$number. ${describeMove(move)}",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (isLatest) FontWeight.Bold else FontWeight.Normal,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
             color = playerColor
         )
         MoveQualityBadge(quality)
@@ -175,8 +173,7 @@ private fun MoveQualityBadge(quality: MoveQuality?) {
         text = label,
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
-        color = MoveQualityLabels.color(quality),
-        modifier = Modifier.padding(start = 4.dp)
+        color = MoveQualityLabels.color(quality)
     )
 }
 

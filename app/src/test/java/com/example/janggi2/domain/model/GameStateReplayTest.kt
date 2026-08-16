@@ -44,4 +44,40 @@ class GameStateReplayTest {
 
         assertEquals(importedBoard, replaying.startBoard)
     }
+
+    @Test
+    fun `수 기록을 눌러 임의 위치로 건너뛸 수 있다`() {
+        val choMove = Move(Position(0, 3), Position(0, 4))
+        val hanMove = Move(Position(0, 6), Position(0, 5))
+        val played = initialGameState().applyMove(choMove).applyMove(hanMove)
+        val replaying = played.enterReplayMode()
+
+        val atMoveOne = replaying.replayTo(1)
+
+        assertEquals(1, atMoveOne.replayPosition)
+        // 첫 수만 반영됐어야 하므로 초 졸은 옮겨졌고 한 졸은 아직 원래 자리.
+        assertEquals(null, atMoveOne.getPieceAt(Position(0, 3)))
+        assertEquals(Player.CHO, atMoveOne.getPieceAt(Position(0, 4))?.player)
+        assertEquals(Player.HAN, atMoveOne.getPieceAt(Position(0, 6))?.player)
+    }
+
+    @Test
+    fun `범위를 벗어난 위치는 0과 수 개수 사이로 눌러 담는다`() {
+        val played = initialGameState()
+            .applyMove(Move(Position(0, 3), Position(0, 4)))
+            .applyMove(Move(Position(0, 6), Position(0, 5)))
+        val replaying = played.enterReplayMode()
+
+        assertEquals(0, replaying.replayTo(-5).replayPosition)
+        assertEquals(2, replaying.replayTo(99).replayPosition)
+    }
+
+    @Test
+    fun `복기 모드가 아니면 replayTo 는 아무것도 하지 않는다`() {
+        val played = initialGameState().applyMove(Move(Position(0, 3), Position(0, 4)))
+
+        val result = played.replayTo(0)
+
+        assertEquals(played, result)
+    }
 }

@@ -33,18 +33,20 @@ fun JangGiNavHost(
             // Handle game loading from savedStateHandle
             val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
             val loadGameId = savedStateHandle?.get<Long>("loadGameId")
+            val loadGameName = savedStateHandle?.get<String>("loadGameName") ?: ""
             val loadForReplay = savedStateHandle?.get<Boolean>("loadForReplay") ?: false
             val importedGameState = savedStateHandle?.get<GameState>("importedGameState")
 
             LaunchedEffect(loadGameId) {
                 if (loadGameId != null) {
                     if (loadForReplay) {
-                        viewModel.loadGameForReplay(loadGameId)
+                        viewModel.loadGameForReplay(loadGameId, loadGameName)
                     } else {
-                        viewModel.loadGame(loadGameId)
+                        viewModel.loadGame(loadGameId, loadGameName)
                     }
                     // Clear savedStateHandle
                     savedStateHandle?.remove<Long>("loadGameId")
+                    savedStateHandle?.remove<String>("loadGameName")
                     savedStateHandle?.remove<Boolean>("loadForReplay")
                 }
             }
@@ -80,21 +82,27 @@ fun JangGiNavHost(
 
         composable(Screen.SavedGames.route) {
             SavedGamesScreen(
-                onGameSelected = { gameId ->
+                onGameSelected = { gameId, name ->
                     // Load the game normally and navigate back
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("loadGameId", gameId)
                     navController.previousBackStackEntry
                         ?.savedStateHandle
+                        ?.set("loadGameName", name)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
                         ?.set("loadForReplay", false)
                     navController.popBackStack()
                 },
-                onGameSelectedForReplay = { gameId ->
+                onGameSelectedForReplay = { gameId, name ->
                     // Load the game for replay and navigate back
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("loadGameId", gameId)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("loadGameName", name)
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("loadForReplay", true)

@@ -4,9 +4,12 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -76,20 +79,60 @@ fun GameScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                // 판을 가로폭에 꽉 채우면 화면 대부분을 차지해, 그 아래 점수·컨트롤·
+                // 수 기록까지 한 화면에 다 들어가지 않는 기기가 많습니다. 전체를
+                // 스크롤되게 해서 수 기록이 공간 부족으로 아예 안 보이는 일이
+                // 없게 합니다.
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Title
+            // 기보 이름. 저장된 적 없는 대국(새 대국·자동저장 복원)은 이름이 없습니다.
             Text(
-                text = "장기",
-                style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                text = uiState.currentGameName ?: "이름 없는 대국",
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp, start = 16.dp, end = 16.dp)
             )
 
             // 점수는 판에서 계산하므로 복기 중에도 그 시점 점수가 그대로 맞습니다.
             val scoreboard = remember(uiState.gameState.board) {
                 MaterialScore.of(uiState.gameState)
             }
+
+            // 장군 상태에 들어갈 때마다 1초만 판 위에 띄우고 사라지는 알림.
+            // 판 바깥에 두면 그만큼 판이 줄어들어, 판 위에 겹쳐 그립니다.
+            var showCheckBanner by remember { mutableStateOf(false) }
+            LaunchedEffect(uiState.gameState) {
+                if (uiState.gameState.status == GameStatus.CHECK) {
+                    showCheckBanner = true
+                    delay(1000)
+                    showCheckBanner = false
+                } else {
+                    showCheckBanner = false
+                }
+            }
+
+            // 판. 좌우 여백 없이 화면 폭에 꽉 채웁니다 - weight 를 다른 형제와
+            // 나눠 갖지 않고 스스로 가로폭만으로 크기를 정하므로, 아래 목록이
+            // 아무리 길어져도 판 크기는 흔들리지 않습니다.
+            BoardWithPieces(
+                pieces = uiState.gameState.board,
+                selectedPiece = if (uiState.gameState.isReplayMode) null else uiState.selectedPiece,
+                validMoves = if (uiState.gameState.isReplayMode) emptyList() else uiState.validMoves,
+                checkPosition = getCheckPosition(uiState.gameState),
+                hintMove = if (uiState.gameState.isReplayMode) null else uiState.hint,
+                onBoardTap = { position ->
+                    viewModel.onEvent(GameUiEvent.BoardTapped(position))
+                },
+                // 고른 진영이 아래로 오게 돌립니다. 한은 원래 아래라 그대로입니다.
+                flipped = uiState.viewpoint == Player.CHO,
+                repetitionNotice = uiState.repetitionNotice,
+                checkNotice = showCheckBanner,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            )
 
             // Current player indicator or replay mode indicator
             if (uiState.gameState.isReplayMode) {
@@ -114,59 +157,6 @@ fun GameScreen(
                 IconButton(onClick = { viewModel.onEvent(GameUiEvent.FlipBoard) }) {
                     Icon(imageVector = Icons.Default.SwapVert, contentDescription = "판 뒤집기")
                 }
-            }
-
-            // 장군 상태에 들어갈 때마다 1초만 판 위에 띄우고 사라지는 알림.
-            // 판 바깥에 두면 그만큼 판이 줄어들어, 판 위에 겹쳐 그립니다.
-            var showCheckBanner by remember { mutableStateOf(false) }
-            LaunchedEffect(uiState.gameState) {
-                if (uiState.gameState.status == GameStatus.CHECK) {
-                    showCheckBanner = true
-                    delay(1000)
-                    showCheckBanner = false
-                } else {
-                    showCheckBanner = false
-                }
-            }
-
-            // Board with pieces
-            BoardWithPieces(
-                pieces = uiState.gameState.board,
-                selectedPiece = if (uiState.gameState.isReplayMode) null else uiState.selectedPiece,
-                validMoves = if (uiState.gameState.isReplayMode) emptyList() else uiState.validMoves,
-                checkPosition = getCheckPosition(uiState.gameState),
-                hintMove = if (uiState.gameState.isReplayMode) null else uiState.hint,
-                onBoardTap = { position ->
-                    viewModel.onEvent(GameUiEvent.BoardTapped(position))
-                },
-                // 고른 진영이 아래로 오게 돌립니다. 한은 원래 아래라 그대로입니다.
-                flipped = uiState.viewpoint == Player.CHO,
-                repetitionNotice = uiState.repetitionNotice,
-                checkNotice = showCheckBanner,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(16.dp)
-            )
-
-            // 수 기록
-            val moveQualities = remember(uiState.gameReview) {
-                val review = uiState.gameReview
-                if (review == null) {
-                    emptyList()
-                } else {
-                    val byIndex = review.moveReviews.associateBy { it.moveIndex }
-                    List(review.moveReviews.size) { i -> byIndex[i]?.quality }
-                }
-            }
-            MoveHistoryPanel(
-                moves = uiState.gameState.moveHistory,
-                scoreboard = scoreboard,
-                moveQualities = moveQualities,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            uiState.gameReview?.let { review ->
-                ReviewSummaryRow(review = review)
             }
 
             // Game controls or replay controls
@@ -239,6 +229,38 @@ fun GameScreen(
                     canReview = uiState.gameState.moveHistory.isNotEmpty()
                 )
             }
+
+            uiState.gameReview?.let { review ->
+                ReviewSummaryRow(review = review)
+            }
+
+            // 수 기록. 판 크기와 무관하게 늘 일정한 높이로 보이고, 그 안에서
+            // 스크롤됩니다. 줄을 누르면 그 수를 둔 직후 국면으로 판이 바뀝니다.
+            val moveQualities = remember(uiState.gameReview) {
+                val review = uiState.gameReview
+                if (review == null) {
+                    emptyList()
+                } else {
+                    val byIndex = review.moveReviews.associateBy { it.moveIndex }
+                    List(review.moveReviews.size) { i -> byIndex[i]?.quality }
+                }
+            }
+            MoveHistoryPanel(
+                moves = uiState.gameState.moveHistory,
+                scoreboard = scoreboard,
+                moveQualities = moveQualities,
+                currentPosition = if (uiState.gameState.isReplayMode) {
+                    uiState.gameState.replayPosition
+                } else {
+                    uiState.gameState.moveHistory.size
+                },
+                onMoveClick = { index ->
+                    viewModel.onEvent(GameUiEvent.JumpToMove(index))
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(280.dp)
+            )
         }
     }
 

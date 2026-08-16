@@ -24,8 +24,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
  */
 @Composable
 fun SavedGamesScreen(
-    onGameSelected: (Long) -> Unit,
-    onGameSelectedForReplay: (Long) -> Unit,
+    onGameSelected: (Long, String) -> Unit,
+    onGameSelectedForReplay: (Long, String) -> Unit,
     onNavigateBack: () -> Unit,
     viewModel: SavedGamesViewModel = hiltViewModel()
 ) {
@@ -69,8 +69,8 @@ fun SavedGamesScreen(
                     items(savedGames, key = { it.id }) { gameInfo ->
                         SavedGameItem(
                             gameInfo = gameInfo,
-                            onLoadClick = { onGameSelected(gameInfo.id) },
-                            onReplayClick = { onGameSelectedForReplay(gameInfo.id) },
+                            onLoadClick = { onGameSelected(gameInfo.id, gameInfo.name) },
+                            onReplayClick = { onGameSelectedForReplay(gameInfo.id, gameInfo.name) },
                             onDeleteClick = { viewModel.deleteGame(gameInfo.id) }
                         )
                     }
