@@ -135,6 +135,7 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.RequestHint -> requestHint()
             is GameUiEvent.DismissHintError -> dismissHintError()
             is GameUiEvent.PassTurn -> passTurn()
+            is GameUiEvent.FlipBoard -> flipBoard()
         }
     }
 
@@ -747,6 +748,15 @@ class GameViewModel @Inject constructor(
         if (newGameState.isAiTurn() && !newGameState.isGameOver()) {
             requestAiMove()
         }
+    }
+
+    /**
+     * 판을 위아래로 뒤집어 봅니다. 불러오기·복기는 viewpoint 를 늘 한(HAN)
+     * 기본값으로 시작하므로, 초를 쥐고 있었거나 사진 속 진영과 다르게 보일 때
+     * 이 버튼으로 직접 바로잡습니다.
+     */
+    private fun flipBoard() {
+        _uiState.value = _uiState.value.copy(viewpoint = _uiState.value.viewpoint.opponent())
     }
 
     private fun dismissHintError() {
