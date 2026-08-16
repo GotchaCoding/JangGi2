@@ -19,9 +19,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.janggi2.domain.model.GameStatus
@@ -36,6 +36,7 @@ import com.example.janggi2.domain.rules.GameRules
 import com.example.janggi2.domain.rules.MaterialScore
 import com.example.janggi2.presentation.game.components.HighlightLayer
 import com.example.janggi2.presentation.game.components.HintLayer
+import com.example.janggi2.presentation.game.components.BoardArtwork
 import com.example.janggi2.presentation.game.components.JangGiBoard
 import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
@@ -328,42 +329,31 @@ private fun BoardWithPieces(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        // 판 크기를 정합니다. 기물은 교차점 "위"에 놓이므로 가장자리 기물이 판 밖으로
-        // 절반 나가고, 그만큼 사방에 여백이 필요합니다. 기물 지름은 칸에 비례하므로
-        // 여백도 판 너비에 비례합니다 - 아래 계수는 그걸 정리한 값입니다.
-        //   칸 세로 = 판너비 / (9 * 0.9) 가 칸 가로보다 작으므로 이게 기준
-        //   여백 = 칸 * PIECE_TO_CELL / 2
-        val overhangFactor = PIECE_TO_CELL / 2f / (BOARD_ASPECT * ROW_GAPS)
-        val boardWidth = minOf(
-            maxWidth / (1f + 2 * overhangFactor),
-            maxHeight / (1f / BOARD_ASPECT + 2 * overhangFactor)
+        // 판 그림을 통째로 넣고 그 안의 격자에 기물을 얹습니다. 그림에 이미 격자 바깥
+        // 여백이 넉넉히 들어 있어(칸의 0.63배) 가장자리 기물이 그림 밖으로 나가지
+        // 않습니다. 예전처럼 판 밖으로 여백을 더 잡을 필요가 없습니다.
+        val boardWidth = minOf(maxWidth, maxHeight * BoardArtwork.ASPECT)
+        val boardHeight = boardWidth / BoardArtwork.ASPECT
+
+        // 칸은 정사각형이고 그림 비율을 지켜 그리므로 가로·세로가 같습니다.
+        val cell = boardWidth * BoardArtwork.CELL
+        val gridOrigin = DpOffset(
+            x = boardWidth * BoardArtwork.GRID_LEFT,
+            y = boardHeight * BoardArtwork.GRID_TOP
         )
-        val boardHeight = boardWidth / BOARD_ASPECT
 
-        // Calculate cell dimensions
-        val cellWidth = boardWidth / COL_GAPS
-        val cellHeight = boardHeight / ROW_GAPS
-
-        // 칸보다 큰 기물을 그리면 서로 겹칩니다. 좁은 화면에서 특히 그렇습니다.
-        val pieceSize = minOf(cellWidth, cellHeight) * PIECE_TO_CELL
-        val overhang = pieceSize / 2
-
-        // 터치 영역은 판보다 여백만큼 넓혀야 합니다. 판 크기 그대로 두면 교차점 위에
-        // 걸쳐 놓인 가장자리 기물의 바깥쪽 절반이 영역 밖이라 눌리지 않습니다. 손가락
-        // 접점이 보이는 지점보다 조금 아래로 잡히는 탓에 맨 아랫줄이 특히 안 눌렸습니다.
         Box(
             modifier = Modifier
-                .size(
-                    width = boardWidth + overhang * 2f,
-                    height = boardHeight + overhang * 2f
-                )
+                .size(width = boardWidth, height = boardHeight)
                 // 판 크기가 바뀌면 아래 계산도 다시 잡혀야 하므로 키로 넘깁니다.
-                .pointerInput(cellWidth, cellHeight, overhang) {
-                    val overhangPx = overhang.toPx()
+                .pointerInput(cell, gridOrigin) {
+                    val cellPx = cell.toPx()
+                    val originX = gridOrigin.x.toPx()
+                    val originY = gridOrigin.y.toPx()
                     detectTapGestures { offset ->
-                        // Convert tap coordinates to board position
-                        val col = ((offset.x - overhangPx) / cellWidth.toPx()).roundToInt()
-                        val row = ((offset.y - overhangPx) / cellHeight.toPx()).roundToInt()
+                        // 격자는 그림 안쪽에서 시작하므로 그만큼 빼고 나눕니다.
+                        val col = ((offset.x - originX) / cellPx).roundToInt()
+                        val row = ((offset.y - originY) / cellPx).roundToInt()
                         val position = Position(col, row)
 
                         if (position.isValid()) {
@@ -382,23 +372,27 @@ private fun BoardWithPieces(
                 HighlightLayer(
                     selectedPosition = selectedPiece?.position?.oriented(flipped),
                     validMoves = validMoves.map { it.oriented(flipped) },
-                    cellWidth = cellWidth,
-                    cellHeight = cellHeight,
-                    checkPosition = checkPosition?.oriented(flipped)
+                    cellWidth = cell,
+                    cellHeight = cell,
+                    checkPosition = checkPosition?.oriented(flipped),
+                    origin = gridOrigin
                 )
 
-                // Draw all pieces
+                // 알마다 크기가 달라서, 칸 크기의 상자를 교차점에 맞춰 놓고 그 안에서
+                // 가운데 정렬합니다. 어떤 알이 얼마나 큰지는 PieceView 가 압니다.
                 pieces.forEach { (position, piece) ->
                     val shown = position.oriented(flipped)
-                    PieceView(
-                        piece = piece,
-                        size = pieceSize,
-                        fontSize = with(LocalDensity.current) { (pieceSize * 0.58f).toSp() },
-                        modifier = Modifier.offset(
-                            x = (shown.col * cellWidth.value).dp - overhang,
-                            y = (shown.row * cellHeight.value).dp - overhang
-                        )
-                    )
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = gridOrigin.x + cell * shown.col.toFloat() - cell / 2f,
+                                y = gridOrigin.y + cell * shown.row.toFloat() - cell / 2f
+                            )
+                            .size(cell),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PieceView(piece = piece, cellSize = cell)
+                    }
                 }
 
                 // 힌트는 기물 위에 그려야 보입니다.
@@ -406,8 +400,9 @@ private fun BoardWithPieces(
                     hintMove = hintMove?.let {
                         it.copy(from = it.from.oriented(flipped), to = it.to.oriented(flipped))
                     },
-                    cellWidth = cellWidth,
-                    cellHeight = cellHeight
+                    cellWidth = cell,
+                    cellHeight = cell,
+                    origin = gridOrigin
                 )
             }
 
@@ -442,16 +437,6 @@ fun GameScreenPreview() {
 private fun formatScore(score: Double): String =
     if (score % 1.0 == 0.0) score.toInt().toString()
     else String.format(java.util.Locale.US, "%.1f", score)
-
-/** 기물 지름을 칸 크기의 몇 배로 그릴지. 1 을 넘으면 이웃 기물과 겹칩니다. */
-private const val PIECE_TO_CELL = 0.92f
-
-/** 장기판 가로:세로 = 9:10 */
-private const val BOARD_ASPECT = 0.9f
-
-/** 9열이므로 칸 간격은 8개, 10행이므로 9개 */
-private const val COL_GAPS = 8f
-private const val ROW_GAPS = 9f
 
 /** 교차점 개수. 판을 돌릴 때 좌표를 뒤집는 데 씁니다. */
 private const val BOARD_COLS = 9

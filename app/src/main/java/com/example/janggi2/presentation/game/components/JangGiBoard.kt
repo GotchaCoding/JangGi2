@@ -1,161 +1,60 @@
 package com.example.janggi2.presentation.game.components
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.janggi2.R
 
 /**
- * Composable that renders the Janggi board using Canvas.
- * - 9 columns × 10 rows grid
- * - Palace diagonal lines in top (Cho) and bottom (Han) palaces
- * - River marking between rows 4 and 5
+ * 장기판 그림.
+ *
+ * 격자·궁성 대각선·나뭇결이 모두 그림에 들어 있어 따로 그리지 않습니다. 대신 기물을
+ * 얹으려면 그림 안에서 격자가 정확히 어디인지 알아야 하는데, 그 값이 [BoardArtwork]
+ * 입니다. 그림을 바꾸면 그 상수도 함께 재야 합니다.
  */
 @Composable
 fun JangGiBoard(modifier: Modifier = Modifier) {
-    Canvas(
-        modifier = modifier
-            .fillMaxSize()
-    ) {
-        val width = size.width
-        val height = size.height
-
-        // Calculate cell size
-        val cellWidth = width / 8f  // 9 columns means 8 spaces
-        val cellHeight = height / 9f  // 10 rows means 9 spaces
-
-        // Draw wood-colored background
-        drawRect(
-            color = Color(0xFFD2B48C) // Tan/Wood color
-        )
-
-        // Draw main grid lines
-        drawGrid(cellWidth, cellHeight)
-
-        // Draw palace diagonals
-        drawPalaceDiagonals(cellWidth, cellHeight)
-
-        // Draw river marking
-        drawRiver(cellWidth, cellHeight)
-    }
-}
-
-/**
- * Draws the main 9×10 grid lines.
- */
-private fun DrawScope.drawGrid(cellWidth: Float, cellHeight: Float) {
-    val gridColor = Color(0xFF654321) // Dark brown for wood board
-    val strokeWidth = 2f
-
-    // Draw vertical lines (9 lines for 9 columns)
-    for (col in 0..8) {
-        val x = col * cellWidth
-        drawLine(
-            color = gridColor,
-            start = Offset(x, 0f),
-            end = Offset(x, size.height),
-            strokeWidth = strokeWidth,
-            cap = StrokeCap.Square
-        )
-    }
-
-    // Draw horizontal lines (10 lines for 10 rows)
-    for (row in 0..9) {
-        val y = row * cellHeight
-        drawLine(
-            color = gridColor,
-            start = Offset(0f, y),
-            end = Offset(size.width, y),
-            strokeWidth = strokeWidth,
-            cap = StrokeCap.Square
-        )
-    }
-}
-
-/**
- * Draws diagonal lines in both palaces.
- * Cho palace: rows 0-2, cols 3-5
- * Han palace: rows 7-9, cols 3-5
- */
-private fun DrawScope.drawPalaceDiagonals(cellWidth: Float, cellHeight: Float) {
-    val gridColor = Color(0xFF654321) // Dark brown for wood board
-    val strokeWidth = 2f
-
-    // Cho palace diagonals (top)
-    val choLeft = 3 * cellWidth
-    val choRight = 5 * cellWidth
-    val choTop = 0f
-    val choBottom = 2 * cellHeight
-
-    // Top-left to bottom-right
-    drawLine(
-        color = gridColor,
-        start = Offset(choLeft, choTop),
-        end = Offset(choRight, choBottom),
-        strokeWidth = strokeWidth,
-        cap = StrokeCap.Square
-    )
-
-    // Top-right to bottom-left
-    drawLine(
-        color = gridColor,
-        start = Offset(choRight, choTop),
-        end = Offset(choLeft, choBottom),
-        strokeWidth = strokeWidth,
-        cap = StrokeCap.Square
-    )
-
-    // Han palace diagonals (bottom)
-    val hanLeft = 3 * cellWidth
-    val hanRight = 5 * cellWidth
-    val hanTop = 7 * cellHeight
-    val hanBottom = 9 * cellHeight
-
-    // Top-left to bottom-right
-    drawLine(
-        color = gridColor,
-        start = Offset(hanLeft, hanTop),
-        end = Offset(hanRight, hanBottom),
-        strokeWidth = strokeWidth,
-        cap = StrokeCap.Square
-    )
-
-    // Top-right to bottom-left
-    drawLine(
-        color = gridColor,
-        start = Offset(hanRight, hanTop),
-        end = Offset(hanLeft, hanBottom),
-        strokeWidth = strokeWidth,
-        cap = StrokeCap.Square
+    Image(
+        painter = painterResource(R.drawable.board),
+        contentDescription = null,
+        // 격자 좌표가 그림 비율에 매여 있으므로 늘이거나 잘라내면 안 됩니다.
+        contentScale = ContentScale.FillBounds,
+        modifier = modifier.fillMaxSize()
     )
 }
 
 /**
- * Draws the river marking between rows 4 and 5.
+ * `res/drawable-nodpi/board.png` 안에서 격자가 놓인 자리. 모두 그림 크기에 대한 비율입니다.
+ *
+ * 원본은 1480×1640 이고 격자는 왼쪽 위 (100.5, 100.5) 에서 시작해 칸이 160.1×160.1 인
+ * 정사각형입니다. 판 그림을 교체하면 이 값들을 다시 재야 기물이 교차점에 놓입니다.
  */
-private fun DrawScope.drawRiver(cellWidth: Float, cellHeight: Float) {
-    val riverColor = Color(0xFF8B4513).copy(alpha = 0.3f) // Saddle brown, subtle
-    val strokeWidth = 1f
+object BoardArtwork {
+    /** 그림의 가로 ÷ 세로 */
+    const val ASPECT = 1480f / 1640f
 
-    val riverY = 4.5f * cellHeight
+    /** 왼쪽 끝 세로선까지의 거리 ÷ 그림 너비 */
+    const val GRID_LEFT = 100.5f / 1480f
 
-    drawLine(
-        color = riverColor,
-        start = Offset(0f, riverY),
-        end = Offset(size.width, riverY),
-        strokeWidth = strokeWidth,
-        cap = StrokeCap.Square
-    )
+    /** 위쪽 끝 가로선까지의 거리 ÷ 그림 높이 */
+    const val GRID_TOP = 100.5f / 1640f
+
+    /**
+     * 칸 하나의 크기 ÷ 그림 너비.
+     *
+     * 칸이 정사각형이고 그림 비율을 지켜 그리므로 세로 칸도 같은 값이 나옵니다
+     * (160.1/1480 = 0.1082, 160.1/1640 × 1640/1480 = 0.1082).
+     */
+    const val CELL = 160.115f / 1480f
 }
 
 @Preview(showBackground = true)
 @Composable
-fun JangGiBoardPreview() {
-    JangGiBoard()
+private fun JangGiBoardPreview() {
+    JangGiBoard(modifier = Modifier.aspectRatio(BoardArtwork.ASPECT))
 }
