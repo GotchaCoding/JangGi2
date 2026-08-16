@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.usecase.ImportBoardFromImageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,8 @@ data class ImportUiState(
     val selectedImageUri: Uri? = null,
     val isProcessing: Boolean = false,
     val importedGameState: GameState? = null,
+    /** 사진에서 실제로 아래쪽에 있던 진영. 게임 화면에 사진과 같은 모습으로 그릴 때 씁니다. */
+    val importedViewpoint: Player = Player.HAN,
     val error: String? = null,
     val processingMessage: String = "사진을 선택하세요"
 )
@@ -67,10 +70,11 @@ class ImportViewModel @Inject constructor(
             val result = importBoardUseCase(uri)
 
             if (result.isSuccess) {
-                val gameState = result.getOrNull()
+                val importedGameResult = result.getOrNull()
                 _uiState.value = _uiState.value.copy(
                     isProcessing = false,
-                    importedGameState = gameState,
+                    importedGameState = importedGameResult?.gameState,
+                    importedViewpoint = importedGameResult?.viewpoint ?: Player.HAN,
                     error = null,
                     processingMessage = "인식 완료!"
                 )

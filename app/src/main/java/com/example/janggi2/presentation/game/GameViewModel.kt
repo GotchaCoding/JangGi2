@@ -502,14 +502,18 @@ class GameViewModel @Inject constructor(
 
     /**
      * Loads an imported game state from image recognition.
+     *
+     * @param viewpoint 사진 속에서 실제로 아래쪽에 있던 진영. 그 진영이 화면 아래에
+     *   오도록 판을 그립니다(사진과 같은 모습).
      */
-    fun loadImportedGame(gameState: GameState) {
+    fun loadImportedGame(gameState: GameState, viewpoint: Player = Player.HAN) {
         _uiState.value = GameUiState(
             gameState = gameState,
             selectedPiece = null,
             validMoves = emptyList(),
             showGameOverDialog = false,
-            isLoading = false
+            isLoading = false,
+            viewpoint = viewpoint
         )
         autoSave()
     }

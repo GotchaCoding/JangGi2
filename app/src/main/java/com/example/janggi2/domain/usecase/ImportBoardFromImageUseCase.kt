@@ -1,7 +1,7 @@
 package com.example.janggi2.domain.usecase
 
 import android.net.Uri
-import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.domain.model.ImportedGameResult
 import com.example.janggi2.domain.repository.BoardImportRepository
 import javax.inject.Inject
 
@@ -16,9 +16,9 @@ class ImportBoardFromImageUseCase @Inject constructor(
      * Imports a board position from an image.
      *
      * @param imageUri URI of the image to process
-     * @return Result containing GameState on success, or error on failure
+     * @return Result containing the imported GameState and display viewpoint on success, or error on failure
      */
-    suspend operator fun invoke(imageUri: Uri): Result<GameState> {
+    suspend operator fun invoke(imageUri: Uri): Result<ImportedGameResult> {
         return try {
             // Step 1: Recognize board from image
             val importResult = repository.recognizeBoardFromImage(imageUri)
@@ -39,10 +39,10 @@ class ImportBoardFromImageUseCase @Inject constructor(
                 return Result.failure(Exception(validationError))
             }
 
-            // Step 3: Convert to GameState
-            val gameState = importedBoard.toGameState()
+            // Step 3: Convert to GameState + display viewpoint
+            val importedGameResult = importedBoard.toImportedGameResult()
 
-            Result.success(gameState)
+            Result.success(importedGameResult)
         } catch (e: Exception) {
             Result.failure(Exception("기보 불러오기 실패: ${e.message}", e))
         }
