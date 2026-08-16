@@ -259,6 +259,16 @@ data class GameState(
     }
 
     /**
+     * 임의의 위치로 곧장 이동합니다. 수 기록을 눌러 그 자리로 건너뛸 때 씁니다.
+     * 범위를 벗어난 값은 0..moveHistory.size 로 눌러 담습니다.
+     */
+    fun replayTo(position: Int): GameState {
+        if (!isReplayMode) return this
+        val clamped = position.coerceIn(0, moveHistory.size)
+        return reconstructStateAtPosition(clamped).copy(replayPosition = clamped)
+    }
+
+    /**
      * Navigates to the last position (final state).
      */
     fun replayLast(): GameState {

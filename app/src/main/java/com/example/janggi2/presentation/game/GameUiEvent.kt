@@ -151,4 +151,10 @@ sealed class GameUiEvent {
      * AI 리뷰 오류 메시지를 닫습니다.
      */
     data object DismissReviewError : GameUiEvent()
+
+    /**
+     * 수 기록에서 특정 수를 눌러 그 수를 둔 직후 국면으로 건너뜁니다.
+     * @param moveIndex moveHistory 의 0부터 시작하는 인덱스
+     */
+    data class JumpToMove(val moveIndex: Int) : GameUiEvent()
 }

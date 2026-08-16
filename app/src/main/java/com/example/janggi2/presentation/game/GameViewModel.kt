@@ -60,7 +60,9 @@ data class GameUiState(
     /** 분석 완료 수 / 전체 국면 수 */
     val reviewProgress: Pair<Int, Int>? = null,
     val gameReview: GameReview? = null,
-    val reviewError: String? = null
+    val reviewError: String? = null,
+    /** 저장된 이름으로 불러왔거나 방금 저장한 대국의 이름. 새/자동저장 복원 대국은 null. */
+    val currentGameName: String? = null
 )
 
 /**
@@ -151,6 +153,7 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.RequestReview -> requestReview()
             is GameUiEvent.CancelReview -> cancelReview()
             is GameUiEvent.DismissReviewError -> dismissReviewError()
+            is GameUiEvent.JumpToMove -> jumpToMove(event.moveIndex)
         }
     }
 
@@ -350,6 +353,7 @@ class GameViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 saveGameUseCase(uiState.value.gameState, name)
+                _uiState.value = _uiState.value.copy(currentGameName = name)
             } catch (e: Exception) {
                 // Handle save error
             }
@@ -401,8 +405,9 @@ class GameViewModel @Inject constructor(
 
     /**
      * Loads a saved game by ID.
+     * @param name 저장할 때 붙인 이름. 화면 상단에 그대로 보여줍니다.
      */
-    fun loadGame(gameId: Long) {
+    fun loadGame(gameId: Long, name: String) {
         viewModelScope.launch {
             try {
                 val loadedState = loadGameUseCase(gameId)
@@ -413,7 +418,8 @@ class GameViewModel @Inject constructor(
                         selectedPiece = null,
                         validMoves = emptyList(),
                         showGameOverDialog = false,
-                        isLoading = false
+                        isLoading = false,
+                        currentGameName = name
                     )
                 }
             } catch (e: Exception) {
@@ -512,8 +518,9 @@ class GameViewModel @Inject constructor(
 
     /**
      * Loads a saved game for replay mode.
+     * @param name 저장할 때 붙인 이름. 화면 상단에 그대로 보여줍니다.
      */
-    fun loadGameForReplay(gameId: Long) {
+    fun loadGameForReplay(gameId: Long, name: String) {
         viewModelScope.launch {
             try {
                 val loadedState = loadGameForReplayUseCase(gameId)
@@ -524,7 +531,8 @@ class GameViewModel @Inject constructor(
                         selectedPiece = null,
                         validMoves = emptyList(),
                         showGameOverDialog = false,
-                        isLoading = false
+                        isLoading = false,
+                        currentGameName = name
                     )
                 }
             } catch (e: Exception) {
@@ -558,13 +566,12 @@ class GameViewModel @Inject constructor(
     private fun enterReplayMode() {
         val currentState = _uiState.value
         val newGameState = currentState.gameState.enterReplayMode()
+        // 복기는 moveHistory 를 바꾸지 않으므로 리뷰 결과(gameReview)는 그대로 둡니다.
         _uiState.value = currentState.copy(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
         )
     }
 
@@ -578,9 +585,7 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
         )
     }
 
@@ -594,9 +599,7 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
         )
     }
 
@@ -610,9 +613,7 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
         )
     }
 
@@ -626,9 +627,7 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
         )
     }
 
@@ -642,9 +641,30 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null,
-            gameReview = null,
-            reviewProgress = null
+            hint = null
+        )
+    }
+
+    /**
+     * 수 기록에서 특정 수를 눌렀을 때 그 수를 둔 직후 국면으로 건너뜁니다.
+     * 복기 중이 아니면 먼저 복기 모드로 들어갑니다.
+     */
+    private fun jumpToMove(moveIndex: Int) {
+        val currentState = _uiState.value
+        if (currentState.isReviewLoading) return
+
+        val replayingState = if (currentState.gameState.isReplayMode) {
+            currentState.gameState
+        } else {
+            currentState.gameState.enterReplayMode()
+        }
+        val newGameState = replayingState.replayTo(moveIndex + 1)
+
+        _uiState.value = currentState.copy(
+            gameState = newGameState,
+            selectedPiece = null,
+            validMoves = emptyList(),
+            hint = null
         )
     }
 
