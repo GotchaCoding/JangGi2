@@ -35,6 +35,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.model.MoveQuality
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
@@ -51,6 +52,8 @@ import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
 import com.example.janggi2.presentation.game.components.PieceView
 import com.example.janggi2.presentation.game.components.ReplayControls
+import com.example.janggi2.presentation.game.components.ReviewProgressDialog
+import com.example.janggi2.presentation.game.components.ReviewSummaryRow
 import com.example.janggi2.presentation.game.components.TurnIndicator
 import com.example.janggi2.ui.theme.JangGi2Theme
 import kotlin.math.roundToInt
@@ -147,11 +150,24 @@ fun GameScreen(
             )
 
             // 수 기록
+            val moveQualities = remember(uiState.gameReview) {
+                val review = uiState.gameReview
+                if (review == null) {
+                    emptyList()
+                } else {
+                    val byIndex = review.moveReviews.associateBy { it.moveIndex }
+                    List(review.moveReviews.size) { i -> byIndex[i]?.quality }
+                }
+            }
             MoveHistoryPanel(
                 moves = uiState.gameState.moveHistory,
                 scoreboard = scoreboard,
+                moveQualities = moveQualities,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
+            uiState.gameReview?.let { review ->
+                ReviewSummaryRow(review = review)
+            }
 
             // Game controls or replay controls
             if (uiState.gameState.isReplayMode) {
@@ -215,7 +231,12 @@ fun GameScreen(
                     isAiGame = uiState.gameState.gameMode.isAiGame(),
                     onShowAiSettings = {
                         viewModel.onEvent(GameUiEvent.ShowAiSettingsDialog)
-                    }
+                    },
+                    onReviewClick = {
+                        viewModel.onEvent(GameUiEvent.RequestReview)
+                    },
+                    isReviewLoading = uiState.isReviewLoading,
+                    canReview = uiState.gameState.moveHistory.isNotEmpty()
                 )
             }
         }
@@ -246,6 +267,27 @@ fun GameScreen(
             confirmText = "확인",
             onConfirm = { viewModel.onEvent(GameUiEvent.DismissHintError) },
             onDismiss = { viewModel.onEvent(GameUiEvent.DismissHintError) }
+        )
+    }
+
+    // AI 리뷰 진행 중
+    if (uiState.isReviewLoading) {
+        val (completed, total) = uiState.reviewProgress ?: (0 to 1)
+        ReviewProgressDialog(
+            completed = completed,
+            total = total,
+            onCancel = { viewModel.onEvent(GameUiEvent.CancelReview) }
+        )
+    }
+
+    // AI 리뷰 오류
+    uiState.reviewError?.let { message ->
+        ConfirmDialog(
+            title = "AI 리뷰",
+            message = message,
+            confirmText = "확인",
+            onConfirm = { viewModel.onEvent(GameUiEvent.DismissReviewError) },
+            onDismiss = { viewModel.onEvent(GameUiEvent.DismissReviewError) }
         )
     }
 

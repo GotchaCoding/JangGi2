@@ -42,6 +42,12 @@ public:
     // Returns move in UCI format (e.g., "a1b1", "a10b10")
     std::string getBestMove(int thinkTimeMs);
 
+    // getBestMove 와 같은 탐색을 하되, 평가 점수도 함께 돌려줍니다. AI 리뷰가
+    // 국면마다 "둘 차례인 쪽" 관점 점수가 필요해서 추가했습니다 - 기존
+    // getBestMove 호출부(AI 착수·힌트)는 그대로 두고 이 경로만 씁니다.
+    // Returns "<uci move> cp<n>" | "<uci move> mate<n>" | "" (합법수 없음)
+    std::string getBestMoveWithScore(int thinkTimeMs);
+
     // 장군 반복·수 반복처럼 국면 이력이 있어야 가릴 수 있는 판정.
     // 인자 형식은 setPosition 과 같고, 수순을 재생해야 엔진이 이력을 갖습니다.
     // Returns "none" | "win" | "loss" | "draw" - 모두 *둘 차례인 쪽* 관점입니다.

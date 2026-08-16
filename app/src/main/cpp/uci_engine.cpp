@@ -271,3 +271,48 @@ std::string UciEngine::getBestMove(int thinkTimeMs) {
     LOGD("Best move: %s", moveStr.c_str());
     return moveStr;
 }
+
+std::string UciEngine::getBestMoveWithScore(int thinkTimeMs) {
+    if (!initialized || !position) {
+        LOGE("Engine not ready");
+        return "";
+    }
+
+    // getBestMove 와 같은 탐색 설정. 이유는 그쪽 주석 참고.
+    Search::LimitsType limits;
+    limits.startTime = now();
+    limits.movetime = TimePoint(thinkTimeMs);
+
+    StateListPtr searchStates(new std::deque<StateInfo>(1));
+    Threads.start_thinking(*position, searchStates, limits, false);
+    Threads.main()->wait_for_search_finished();
+
+    if (Threads.main()->rootMoves.empty()) {
+        LOGE("No legal moves");
+        return "";
+    }
+
+    const auto& rootMove = Threads.main()->rootMoves[0];
+    Move bestMove = rootMove.pv[0];
+    if (bestMove == MOVE_NONE) {
+        LOGE("No best move found");
+        return "";
+    }
+
+    std::string moveStr = UCI::move(*position, bestMove);
+
+    // fairystockfish/src/uci.cpp 의 UCI::value() 와 같은 변환식입니다.
+    // PawnValueEg 기준으로 정규화해 졸(폰) 1개 ≈ 100 이 되게 합니다.
+    Value v = rootMove.score;
+    std::ostringstream oss;
+    oss << moveStr << ' ';
+    if (std::abs(v) < VALUE_MATE_IN_MAX_PLY) {
+        oss << "cp" << (v * 100 / PawnValueEg);
+    } else {
+        oss << "mate" << (v > 0 ? (VALUE_MATE - v + 1) / 2 : (-VALUE_MATE - v - 1) / 2);
+    }
+
+    std::string result = oss.str();
+    LOGD("Best move with score: %s", result.c_str());
+    return result;
+}

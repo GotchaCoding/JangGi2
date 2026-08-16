@@ -151,6 +151,33 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
 }
 
 JNIEXPORT jstring JNICALL
+Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMoveWithScore(
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs) {
+
+    LOGD("nativeGetBestMoveWithScore called: thinkTime=%dms", thinkTimeMs);
+
+    if (enginePtr == 0) {
+        LOGE("Null engine pointer in nativeGetBestMoveWithScore");
+        return env->NewStringUTF("");
+    }
+
+    try {
+        UciEngine* engine = toEngine(enginePtr);
+        std::string result = engine->getBestMoveWithScore(static_cast<int>(thinkTimeMs));
+
+        LOGD("Best move with score: %s", result.c_str());
+        return env->NewStringUTF(result.c_str());
+
+    } catch (const std::exception& e) {
+        LOGE("Exception in nativeGetBestMoveWithScore: %s", e.what());
+        return env->NewStringUTF("");
+    } catch (...) {
+        LOGE("Unknown exception in nativeGetBestMoveWithScore");
+        return env->NewStringUTF("");
+    }
+}
+
+JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGameOutcome(
     JNIEnv* env, jobject thiz, jlong enginePtr, jstring uciPosition) {
 

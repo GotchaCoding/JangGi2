@@ -3,6 +3,7 @@ package com.example.janggi2.presentation.game
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.janggi2.domain.model.GameMode
+import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.Piece
@@ -20,6 +21,8 @@ import com.example.janggi2.domain.usecase.GetHintUseCase
 import com.example.janggi2.domain.usecase.InitializeAiUseCase
 import com.example.janggi2.domain.usecase.LoadGameUseCase
 import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
+import com.example.janggi2.domain.usecase.ReviewGameUseCase
+import com.example.janggi2.domain.usecase.ReviewProgress
 import com.example.janggi2.domain.usecase.SaveGameUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -52,7 +55,12 @@ data class GameUiState(
      * 아래쪽에 놓고 보는 진영. 고른 쪽이 자기 앞에 오도록 판을 돌려 그립니다.
      * 예전부터 한이 아래였으므로 그것이 기본입니다.
      */
-    val viewpoint: Player = Player.HAN
+    val viewpoint: Player = Player.HAN,
+    val isReviewLoading: Boolean = false,
+    /** 분석 완료 수 / 전체 국면 수 */
+    val reviewProgress: Pair<Int, Int>? = null,
+    val gameReview: GameReview? = null,
+    val reviewError: String? = null
 )
 
 /**
@@ -69,6 +77,7 @@ class GameViewModel @Inject constructor(
     private val initializeAiUseCase: InitializeAiUseCase,
     private val getAiMoveUseCase: GetAiMoveUseCase,
     private val getHintUseCase: GetHintUseCase,
+    private val reviewGameUseCase: ReviewGameUseCase,
     repetitionJudge: RepetitionJudge
 ) : ViewModel() {
     companion object {
@@ -80,6 +89,9 @@ class GameViewModel @Inject constructor(
 
     /** 반복수 알림을 지우는 타이머. 연달아 눌렀을 때 갈아끼웁니다. */
     private var repetitionNoticeJob: Job? = null
+
+    /** 진행 중인 AI 리뷰. 화면을 벗어나거나 취소하면 잘라냅니다. */
+    private var reviewJob: Job? = null
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
@@ -136,6 +148,9 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.DismissHintError -> dismissHintError()
             is GameUiEvent.PassTurn -> passTurn()
             is GameUiEvent.FlipBoard -> flipBoard()
+            is GameUiEvent.RequestReview -> requestReview()
+            is GameUiEvent.CancelReview -> cancelReview()
+            is GameUiEvent.DismissReviewError -> dismissReviewError()
         }
     }
 
@@ -151,6 +166,11 @@ class GameViewModel @Inject constructor(
 
         // Don't allow moves if game is over or in replay mode
         if (currentState.gameState.isGameOver() || currentState.gameState.isReplayMode) {
+            return
+        }
+
+        // AI 리뷰가 이 국면을 순서대로 읽고 있으므로, 끝나기 전에는 판을 바꾸지 않습니다.
+        if (currentState.isReviewLoading) {
             return
         }
 
@@ -237,6 +257,8 @@ class GameViewModel @Inject constructor(
                 selectedPiece = null,
                 validMoves = emptyList(),
                 hint = null,
+                gameReview = null,
+                reviewProgress = null,
                 showGameOverDialog = newGameState.isGameOver()
             )
 
@@ -284,6 +306,7 @@ class GameViewModel @Inject constructor(
      */
     private fun undo() {
         val currentState = _uiState.value
+        if (currentState.isReviewLoading) return
         val previousState = currentState.gameState.undo()
 
         if (previousState != null) {
@@ -291,7 +314,9 @@ class GameViewModel @Inject constructor(
                 gameState = previousState,
                 selectedPiece = null,
                 validMoves = emptyList(),
-                hint = null
+                hint = null,
+                gameReview = null,
+                reviewProgress = null
             )
             autoSave()
         }
@@ -302,6 +327,7 @@ class GameViewModel @Inject constructor(
      */
     private fun redo() {
         val currentState = _uiState.value
+        if (currentState.isReviewLoading) return
         val nextState = currentState.gameState.redo()
 
         if (nextState != null) {
@@ -309,7 +335,9 @@ class GameViewModel @Inject constructor(
                 gameState = nextState,
                 selectedPiece = null,
                 validMoves = emptyList(),
-                hint = null
+                hint = null,
+                gameReview = null,
+                reviewProgress = null
             )
             autoSave()
         }
@@ -379,6 +407,7 @@ class GameViewModel @Inject constructor(
             try {
                 val loadedState = loadGameUseCase(gameId)
                 if (loadedState != null) {
+                    reviewJob?.cancel()
                     _uiState.value = GameUiState(
                         gameState = loadedState,
                         selectedPiece = null,
@@ -397,6 +426,7 @@ class GameViewModel @Inject constructor(
      * Resets the game to the initial state.
      */
     fun resetGame() {
+        reviewJob?.cancel()
         _uiState.value = GameUiState(
             gameState = initialGameState(),
             selectedPiece = null,
@@ -443,6 +473,7 @@ class GameViewModel @Inject constructor(
             hanSetup = hanSetup
         )
 
+        reviewJob?.cancel()
         _uiState.value = GameUiState(
             gameState = newGameState,
             selectedPiece = null,
@@ -487,6 +518,7 @@ class GameViewModel @Inject constructor(
             try {
                 val loadedState = loadGameForReplayUseCase(gameId)
                 if (loadedState != null) {
+                    reviewJob?.cancel()
                     _uiState.value = GameUiState(
                         gameState = loadedState,
                         selectedPiece = null,
@@ -508,6 +540,7 @@ class GameViewModel @Inject constructor(
      *   오도록 판을 그립니다(사진과 같은 모습).
      */
     fun loadImportedGame(gameState: GameState, viewpoint: Player = Player.HAN) {
+        reviewJob?.cancel()
         _uiState.value = GameUiState(
             gameState = gameState,
             selectedPiece = null,
@@ -529,7 +562,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -543,7 +578,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -557,7 +594,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -571,7 +610,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -585,7 +626,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -599,7 +642,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
     }
 
@@ -613,7 +658,9 @@ class GameViewModel @Inject constructor(
             gameState = newGameState,
             selectedPiece = null,
             validMoves = emptyList(),
-            hint = null
+            hint = null,
+            gameReview = null,
+            reviewProgress = null
         )
         // Auto-save after continuing from replay
         autoSave()
@@ -726,6 +773,7 @@ class GameViewModel @Inject constructor(
      */
     private fun passTurn() {
         val currentState = _uiState.value
+        if (currentState.isReviewLoading) return
         val withUndo = currentState.gameState.pushToUndoStack()
 
         // 판이 그대로여도 차례가 넘어가 국면이 되풀이될 수 있습니다.
@@ -741,6 +789,8 @@ class GameViewModel @Inject constructor(
             selectedPiece = null,
             validMoves = emptyList(),
             hint = null,
+            gameReview = null,
+            reviewProgress = null,
             showGameOverDialog = newGameState.isGameOver()
         )
         autoSave()
@@ -757,6 +807,71 @@ class GameViewModel @Inject constructor(
      */
     private fun flipBoard() {
         _uiState.value = _uiState.value.copy(viewpoint = _uiState.value.viewpoint.opponent())
+    }
+
+    /**
+     * 지금까지 둔 모든 수를 최선수/좋음/부정확/실수/악수로 판정합니다. 국면 하나당
+     * 엔진 탐색 한 번이라 시간이 걸려서(수십 초) 진행률을 보여주고, 도중에 판이
+     * 바뀌지 않도록 [handleBoardTap]/[undo]/[redo]/[passTurn] 이 [GameUiState.isReviewLoading]
+     * 을 봅니다.
+     */
+    private fun requestReview() {
+        val currentState = _uiState.value
+        val gameState = currentState.gameState
+
+        if (currentState.isReviewLoading) return
+        if (gameState.moveHistory.isEmpty()) return
+        if (!aiEngine.isReady()) {
+            _uiState.value = currentState.copy(reviewError = "AI 엔진을 준비 중입니다. 잠시 후 다시 시도해주세요.")
+            return
+        }
+
+        reviewJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isReviewLoading = true,
+                reviewError = null,
+                gameReview = null,
+                reviewProgress = null
+            )
+            try {
+                reviewGameUseCase.review(gameState).collect { progress ->
+                    when (progress) {
+                        is ReviewProgress.Analyzing -> {
+                            _uiState.value = _uiState.value.copy(
+                                reviewProgress = progress.completed to progress.total
+                            )
+                        }
+                        is ReviewProgress.Finished -> {
+                            _uiState.value = _uiState.value.copy(
+                                gameReview = progress.review,
+                                isReviewLoading = false,
+                                reviewProgress = null
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error running AI review", e)
+                _uiState.value = _uiState.value.copy(
+                    isReviewLoading = false,
+                    reviewProgress = null,
+                    reviewError = "리뷰 중 오류가 발생했습니다."
+                )
+            }
+        }
+    }
+
+    /**
+     * 진행 중인 AI 리뷰를 취소합니다.
+     */
+    private fun cancelReview() {
+        reviewJob?.cancel()
+        reviewJob = null
+        _uiState.value = _uiState.value.copy(isReviewLoading = false, reviewProgress = null)
+    }
+
+    private fun dismissReviewError() {
+        _uiState.value = _uiState.value.copy(reviewError = null)
     }
 
     private fun dismissHintError() {
