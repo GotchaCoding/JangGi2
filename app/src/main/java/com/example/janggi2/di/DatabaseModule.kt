@@ -29,7 +29,7 @@ object DatabaseModule {
             JangGiDatabase::class.java,
             "janggi_database"
         )
-            .addMigrations(JangGiDatabase.MIGRATION_1_2)
+            .addMigrations(JangGiDatabase.MIGRATION_1_2, JangGiDatabase.MIGRATION_2_3)
             .build()
     }
 

@@ -400,7 +400,11 @@ fun initialGameState(
         currentPlayer = Player.CHO,
         gameMode = gameMode,
         aiDifficulty = aiDifficulty,
-        aiPlayer = aiPlayer
+        aiPlayer = aiPlayer,
+        // 마·상 배치가 기본값이 아닐 수 있어(대국자가 고름), 복기·수 기록 이동이
+        // reconstructStateAtPosition 으로 되감을 때 이 판을 그대로 시작점으로 씁니다.
+        // 없으면 항상 기본 배치로 되감아 실제와 다른 기물이 나옵니다.
+        startBoard = pieces
     )
 }
 
