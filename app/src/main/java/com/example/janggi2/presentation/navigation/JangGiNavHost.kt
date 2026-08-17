@@ -13,6 +13,7 @@ import com.example.janggi2.presentation.game.GameScreen
 import com.example.janggi2.presentation.game.GameViewModel
 import com.example.janggi2.presentation.importboard.ImportScreen
 import com.example.janggi2.presentation.savedgames.SavedGamesScreen
+import com.example.janggi2.presentation.videoimport.VideoImportScreen
 
 /**
  * Navigation host for the app.
@@ -74,6 +75,9 @@ fun JangGiNavHost(
                 onNavigateToImport = {
                     navController.navigate(Screen.Import.route)
                 },
+                onNavigateToVideoImport = {
+                    navController.navigate(Screen.VideoImport.route)
+                },
                 onNavigateToDebug = {
                     navController.navigate(Screen.LineDetectionDebug.route)
                 }
@@ -118,6 +122,20 @@ fun JangGiNavHost(
             ImportScreen(
                 onImportComplete = { gameState, viewpoint ->
                     // Store in temporary holder and navigate back
+                    ImportStateHolder.pendingImportedGameState = gameState
+                    ImportStateHolder.pendingImportedViewpoint = viewpoint
+                    navController.popBackStack()
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.VideoImport.route) {
+            VideoImportScreen(
+                onImportComplete = { gameState, viewpoint ->
+                    // 사진 불러오기와 같은 방식으로 넘깁니다 - 둘 다 결국 "판+viewpoint" 하나입니다.
                     ImportStateHolder.pendingImportedGameState = gameState
                     ImportStateHolder.pendingImportedViewpoint = viewpoint
                     navController.popBackStack()

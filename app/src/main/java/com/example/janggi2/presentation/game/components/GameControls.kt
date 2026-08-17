@@ -39,6 +39,7 @@ fun GameControls(
     onSaveClick: (String) -> Unit,
     onLoadClick: () -> Unit,
     onImportClick: () -> Unit,
+    onVideoImportClick: () -> Unit = {},
     onResetClick: () -> Unit,
     onDebugClick: () -> Unit = {},
     onHintClick: () -> Unit = {},
@@ -126,6 +127,10 @@ fun GameControls(
 
             TextButton(onClick = onImportClick) {
                 Text("사진 불러오기")
+            }
+
+            TextButton(onClick = onVideoImportClick) {
+                Text("동영상 불러오기")
             }
 
             TextButton(

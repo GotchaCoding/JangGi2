@@ -49,6 +49,19 @@ class BoardRecognitionService @Inject constructor(
      * @return Result containing detected pieces
      */
     suspend fun extractText(imageUri: Uri): Result<ExtractedText> {
+        val bitmap = loadAndDownsampleImage(imageUri)
+            ?: return Result.failure(Exception("이미지를 불러올 수 없습니다"))
+        return extractFromBitmap(bitmap)
+    }
+
+    /**
+     * [extractText] 와 같은 인식을 이미 메모리에 있는 [Bitmap] 에 대해 돌립니다.
+     *
+     * 동영상 불러오기가 이 진입점을 씁니다 - 동영상 프레임은 `Uri` 로 감쌀 이유가 없어
+     * `Bitmap` 을 바로 넘깁니다. `Uri` 를 다루는 부분(파일 읽기·다운샘플)은
+     * [loadAndDownsampleImage] 뿐이고 그 아래는 원래도 전부 `Bitmap` 기준이었습니다.
+     */
+    suspend fun extractFromBitmap(bitmap: Bitmap): Result<ExtractedText> {
         return try {
             Log.d(TAG, "=== Board Recognition Started ===")
 
@@ -57,10 +70,6 @@ class BoardRecognitionService @Inject constructor(
             if (!pieceDetector.isTemplateInitialized()) {
                 initializeTemplatesFromBundledAsset()
             }
-
-            // 1. Load image
-            val bitmap = loadAndDownsampleImage(imageUri)
-                ?: return Result.failure(Exception("이미지를 불러올 수 없습니다"))
 
             Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}")
 
