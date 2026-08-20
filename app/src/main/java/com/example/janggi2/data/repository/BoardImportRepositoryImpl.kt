@@ -27,14 +27,17 @@ class BoardImportRepositoryImpl @Inject constructor(
             val extractedText = extractionResult.getOrNull()
                 ?: return Result.failure(Exception("추출 결과를 받을 수 없습니다"))
 
-            // Map to ImportedBoardState
-            val detectedPieces = extractedText.detectedPieces.associate { detected ->
-                detected.position to DetectedPiece(
-                    piece = detected.piece,
-                    confidence = detected.confidence,
-                    isManuallyAdjusted = false
-                )
-            }
+            // Map to ImportedBoardState (신뢰도가 문턱 미만인 검출은 배경 노이즈 오검출로
+            // 보고 버립니다 - ImportedBoardState.MIN_ACCEPTED_CONFIDENCE 참고)
+            val detectedPieces = ImportedBoardState.filterByConfidence(
+                extractedText.detectedPieces.associate { detected ->
+                    detected.position to DetectedPiece(
+                        piece = detected.piece,
+                        confidence = detected.confidence,
+                        isManuallyAdjusted = false
+                    )
+                }
+            )
 
             if (detectedPieces.isEmpty()) {
                 return Result.failure(Exception("기물을 감지하지 못했습니다"))

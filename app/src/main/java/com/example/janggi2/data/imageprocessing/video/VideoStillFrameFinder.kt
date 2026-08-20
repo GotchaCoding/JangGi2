@@ -5,122 +5,110 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
-import com.example.janggi2.data.imageprocessing.BoardDetector
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 동영상에서 수 하나가 착수 지점에 다 도착해 멈춘(정지) 순간의 프레임만 골라냅니다.
+ * 동영상에서 기보 재구성에 쓸 정지 프레임을 고릅니다.
  *
- * 처음엔 "화면 전체가 안 움직이는 구간"을 찾으려 했는데, 실제 영상(수마다 기물이 도착
- * 칸에서 서서히 또렷해지는 애니메이션)에서는 한 수의 애니메이션이 끝나자마자 곧바로 다음
- * 수가 시작돼 화면이 거의 쉬지 않고 계속 움직입니다 - "가만히 있는 구간"은 없다시피
- * 합니다.
+ * 기물이 다 멈췄는지를 픽셀로 추측하는 대신, 화면에 찍힌 "N/전체" 수 번호를
+ * OCR([ReplayPositionReader])로 직접 읽습니다. 어떤 수 번호가 화면에 떠 있는 동안은
+ * 표본 여러 개가 같은 값을 읽어내는데(그 구간을 "고원(plateau)"이라 부릅니다), 그 값이
+ * **처음 나타난 시점**(=수 번호가 막 바뀐 타이밍)의 표본을 그 수의 대표 프레임으로
+ * 씁니다.
  *
- * 대신 **어느 칸이 움직이고 있는지**를 봅니다: 정지해 있던 기물 하나가 움직이기
- * 시작하면 그 칸이 계속 바뀌다가, 다른 칸이 바뀌기 시작하면 그건 방금 그 기물이
- * 멈추고 다음 기물이 움직이기 시작했다는 뜻입니다 - 그 경계 직전 프레임이 방금 그
- * 수의 정지 프레임입니다. 바뀐 픽셀의 위치를 판의 9x10 칸 좌표로 변환해 "지금 움직이는
- * 칸"을 추적하고, 그 칸이 바뀌는 순간을 경계로 씁니다.
- *
- * 두 단계로 나눠 처리합니다:
- * 1. **훑기(싸다)**: 판 영역만 작은 썸네일로 촘촘히 훑으며, 앞 프레임과 달라진 픽셀들이
- *    어느 칸에 몰려 있는지만 봅니다. 판 밖 다른 UI(타이머·수 카운터 등)의 움직임은
- *    무시하기 위해 처음에 한 번만 판 경계를 찾아 그 안쪽만 봅니다.
- * 2. **뽑기(비싸다)**: 움직이는 칸이 넘어가는 경계마다 그 직전 프레임의 시점만 원본
- *    해상도로 다시 뽑습니다.
- *
- * 프레임을 전부 원본 해상도로 들고 있으면 메모리가 감당이 안 됩니다(1080x2340 한 장이
- * ARGB_8888 기준 ~10MB) - 그래서 훑는 동안은 작은 썸네일만 씁니다.
+ * 착수 완료 여부를 직접 판정하지 않는 게 핵심입니다: 어차피 뒤([ImportBoardFromVideoUseCase])
+ * 에서 이 프레임의 **상대 진영**(방금 안 움직인 쪽) 위치만 신뢰해서 쓰므로, "이 수를 둔
+ * 기물이 완전히 멈췄는가"는 몰라도 됩니다.
  */
 @Singleton
 class VideoStillFrameFinder @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val boardDetector: BoardDetector
+    private val replayPositionReader: ReplayPositionReader
 ) {
     companion object {
         private const val TAG = "VideoStillFrameFinder"
 
-        /**
-         * 훑는 단계의 표본 간격. 수 하나의 애니메이션이 아주 짧을 수 있어(실측 샘플 영상
-         * 기준 수십 ms) 성기게 훑으면 경계를 그냥 지나칩니다.
-         */
+        /** 훑는 단계의 표본 간격. */
         private const val SCAN_INTERVAL_MS = 10L
 
         /** 훑는 프레임 수 상한 - 긴 영상에서도 처리 시간이 무한정 늘지 않도록 간격을 늘립니다. */
         private const val MAX_SCAN_FRAMES = 800
 
         /**
-         * 훑는 단계에서 프레임 전체를 줄이는 크기. 1080:2340 비율을 그대로 유지합니다
-         * (가로세로 비율이 달라지면 판 경계 좌표를 그대로 못 씁니다).
+         * 수 번호 표시 영역을 화면 비율로 자릅니다(기기·해상도가 달라도 비율은 비슷할
+         * 것으로 가정). 실측 샘플 영상(1080x2340)에서 "14 / 49" 표시가 대략 이 안에
+         * 들어오는 걸 확인하고, 여유를 두어 넓혔습니다.
          */
-        private const val SCAN_WIDTH = 270
-        private const val SCAN_HEIGHT = 585
-
-        /** 이 값보다 밝기 차이가 크면(0~255) 그 픽셀은 "바뀌었다"로 봅니다. */
-        private const val PIXEL_DIFF_THRESHOLD = 20
-
-        /** 바뀐 픽셀이 이보다 적으면 노이즈로 보고 "이 프레임 사이엔 안 바뀌었다"로 칩니다. */
-        private const val MIN_CHANGED_PIXELS = 4
-
-        /** 장기판의 칸 수(교차점 기준 9x10). */
-        private const val BOARD_COLS = 9
-        private const val BOARD_ROWS = 10
+        private const val COUNTER_LEFT_RATIO = 0.35
+        private const val COUNTER_TOP_RATIO = 0.54
+        private const val COUNTER_RIGHT_RATIO = 0.65
+        private const val COUNTER_BOTTOM_RATIO = 0.65
 
         /**
-         * 지금 움직이는 칸에서 이만큼(칸 단위) 안쪽이면 "같은 기물이 계속 움직이는
-         * 중"으로 봅니다. 기물이 커지며 나타나는 애니메이션이라 바뀐 픽셀 뭉치의 무게중심이
-         * 살짝 옆 칸으로 번질 수 있어 여유를 둡니다.
+         * OCR로 읽은 "지금 수" 값 목록에서, 같은 값이 이어지는 구간(고원)을 순서대로
+         * 묶습니다. 읽기 실패(null)는 그 사이에 끼어도 구간을 끊지 않습니다 - 순간적인
+         * 오독으로 보고 건너뜁니다.
          */
-        private const val CELL_TOLERANCE = 1
+        internal fun groupPlateaus(currents: List<Int?>): List<Plateau> {
+            val result = mutableListOf<Plateau>()
+            var value: Int? = null
+            var indices = mutableListOf<Int>()
 
-        /**
-         * 움직이는 칸이 넘어가는 경계마다, 그 경계 직전 프레임(=그 칸이 마지막으로 바뀐
-         * 채로 남아있던 프레임)의 인덱스를 고릅니다. 처음과 마지막 프레임은 항상
-         * 포함합니다(각각 시작 국면·영상이 끝난 시점의 국면).
-         *
-         * 안드로이드 프레임워크 없이도 테스트할 수 있게 companion object 에 둡니다.
-         *
-         * @param diffCells `diffCells[k]` 는 프레임 k와 프레임 k+1 사이 바뀐 픽셀들의
-         *   무게중심이 속한 칸(바뀐 픽셀이 없으면 null). 그래서 크기는 "프레임 수 - 1" 입니다.
-         */
-        internal fun pickSettledFrameIndices(
-            diffCells: List<CellCoordinate?>,
-            cellTolerance: Int = CELL_TOLERANCE
-        ): List<Int> {
-            if (diffCells.isEmpty()) return listOf(0)
-
-            val settled = linkedSetOf(0)
-            var currentCell: CellCoordinate? = null
-            var lastFrameInEvent: Int? = null
-
-            for (k in diffCells.indices) {
-                val cell = diffCells[k] ?: continue
-
-                val continuesEvent = currentCell?.isNear(cell, cellTolerance) ?: true
-                if (!continuesEvent) {
-                    lastFrameInEvent?.let { settled.add(it) }
+            for (i in currents.indices) {
+                val v = currents[i] ?: continue
+                if (v != value) {
+                    if (value != null) result.add(Plateau(value, indices))
+                    value = v
+                    indices = mutableListOf()
                 }
-
-                // 자리를 최신 칸으로 갱신합니다 - 애니메이션이 진행되며 무게중심이
-                // 서서히 옮겨가도(예: 대각선으로 걸친 경우) 계속 같은 기물로 따라갑니다.
-                currentCell = cell
-                lastFrameInEvent = k + 1
+                indices.add(i)
             }
-
-            settled.add(diffCells.size) // 마지막 프레임 인덱스 (diffCells.size == frames.lastIndex)
-            return settled.sorted()
+            if (value != null) result.add(Plateau(value, indices))
+            return result
         }
+
+        /**
+         * 이 리플레이 화면의 특성: 대기 화면("0/전체")에서 "다음"을 처음 누르면(실제로는
+         * 1수인데) 화면에 "1" 대신 **전체 수와 같은 값**이 찍힙니다(예: 전체 45수짜리
+         * 영상에서 1수째가 "45/45"로 표시됨).
+         *
+         * "전체 수"를 OCR로 따로 읽어서 대조하는 방식은 못 씁니다 - 실측 결과 "전체
+         * 수" 쪽 숫자가 자주 다른 자릿수로 오독되는 게(예: "45"를 "145"로) 확인돼서,
+         * 그 값 자체를 신뢰할 수 없었습니다. 대신 **수 번호는 항상 증가한다**는 사실만
+         * 이용합니다: 대기 화면(0) 바로 다음 고원의 값이 그 다음 고원보다 오히려 **더
+         * 크면**(정상이라면 항상 작아야 함 - 1수는 2수보다 작아야 하니까) 그건 "1"이
+         * 아니라 전체 수로 잘못 찍힌 것으로 보고 1로 바로잡습니다.
+         */
+        internal fun correctFirstMoveLabel(plateaus: List<Plateau>): List<Plateau> {
+            val idleIndex = plateaus.indexOfFirst { it.value == 0 }
+            if (idleIndex == -1 || idleIndex + 2 >= plateaus.size) return plateaus
+            val mislabeled = plateaus[idleIndex + 1]
+            val afterNext = plateaus[idleIndex + 2]
+            if (mislabeled.value <= afterNext.value) return plateaus
+
+            return plateaus.mapIndexed { i, p -> if (i == idleIndex + 1) p.copy(value = 1) else p }
+        }
+
+        /**
+         * 고원마다 (수 번호, 대표 표본 인덱스) 를 뽑습니다. 그 수가 변경되기 전
+         * 중간 지점이 아니라, **그 값이 처음 나타난 시점**(=OCR 검출 숫자가 막 바뀐
+         * 타이밍)을 대표로 씁니다.
+         */
+        internal fun pickRepresentativeIndices(plateaus: List<Plateau>): List<Pair<Int, Int>> =
+            plateaus.map { it.value to it.sampleIndices.first() }
     }
 
+    /** 정지 프레임 하나 - OCR로 읽은(그리고 필요시 보정한) 실제 수 번호가 붙어 있습니다. */
+    data class StillFrame(val bitmap: Bitmap, val position: Int)
+
     /**
-     * @return 정지 구간마다 하나씩, 시간순으로 정렬된 원본 해상도 프레임. 실패하면 빈 목록.
+     * @return 수 번호마다 하나씩, 오름차순으로 정렬된 원본 해상도 프레임. 실패하면 빈 목록.
      */
-    suspend fun findStillFrames(videoUri: Uri): List<Bitmap> = withContext(Dispatchers.IO) {
+    suspend fun findStillFrames(videoUri: Uri): List<StillFrame> = withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, videoUri)
@@ -133,25 +121,27 @@ class VideoStillFrameFinder @Inject constructor(
             }
 
             val sampleTimesMs = buildSampleTimes(durationMs)
-            val boardRect = detectBoardRect(retriever, sampleTimesMs.first())
-            val diffCells = scanDiffCells(retriever, sampleTimesMs, boardRect)
-            val settledIndices = pickSettledFrameIndices(diffCells)
-            Log.d(
-                TAG,
-                "Sampled ${sampleTimesMs.size} frames, picked ${settledIndices.size} settled frames " +
-                    "(board rect: $boardRect)"
-            )
-            Log.d(
-                TAG,
-                "Settled frame times(ms): " + settledIndices.joinToString(", ") { sampleTimesMs[it].toString() }
-            )
-            logCellTransitions(diffCells)
+            val readings = sampleTimesMs.map { timeMs -> readPositionAt(retriever, timeMs) }
+            val currents = readings.map { it?.first }
 
-            settledIndices.mapNotNull { index ->
-                retriever.getFrameAtTime(
-                    sampleTimesMs[index] * 1000,
+            val rawPlateaus = groupPlateaus(currents)
+            val plateaus = correctFirstMoveLabel(rawPlateaus)
+            val representatives = pickRepresentativeIndices(plateaus).sortedBy { it.first }
+
+            Log.d(
+                TAG,
+                "Sampled ${sampleTimesMs.size} frames, ${plateaus.size} plateaus picked: " +
+                    representatives.joinToString(", ") { (position, sampleIdx) ->
+                        "$position@${sampleTimesMs[sampleIdx]}ms"
+                    }
+            )
+
+            representatives.mapNotNull { (position, sampleIdx) ->
+                val bitmap = retriever.getFrameAtTime(
+                    sampleTimesMs[sampleIdx] * 1000,
                     MediaMetadataRetriever.OPTION_CLOSEST
-                )
+                ) ?: return@mapNotNull null
+                StillFrame(bitmap, position)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read video", e)
@@ -172,127 +162,29 @@ class VideoStillFrameFinder @Inject constructor(
     }
 
     /**
-     * 판 경계를 첫 프레임에서 한 번만 찾습니다 - 같은 영상 안에서 판이 움직일 리 없으니,
-     * 매 프레임 다시 찾을 필요가 없습니다. 실패하면 화면 전체를 판으로 취급합니다.
+     * 표본 시각의 원본 해상도 프레임에서 수 번호 표시 영역만 잘라 OCR을 돌립니다.
+     * 작은 글자라 썸네일 해상도로는 못 읽으므로 원본 해상도가 필요합니다 - 그만큼
+     * 표본 수가 많은 긴 영상에서는 느려질 수 있습니다.
      */
-    private fun detectBoardRect(retriever: MediaMetadataRetriever, firstTimeMs: Long): IntRect {
-        val first = retriever.getScaledFrameAtTime(
-            firstTimeMs * 1000,
-            MediaMetadataRetriever.OPTION_CLOSEST,
-            SCAN_WIDTH,
-            SCAN_HEIGHT
-        )
-        if (first == null) return IntRect(0, 0, SCAN_WIDTH, SCAN_HEIGHT)
+    private suspend fun readPositionAt(retriever: MediaMetadataRetriever, timeMs: Long): Pair<Int, Int>? {
+        val full = retriever.getFrameAtTime(timeMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
+        val counterCrop = cropCounterRegion(full)
+        full.recycle()
 
-        val rect = boardDetector.detectBoard(first) ?: boardDetector.estimateBoardRegion(first)
-        first.recycle()
-        return IntRect(rect.left, rect.top, rect.right, rect.bottom)
-            .clampTo(SCAN_WIDTH, SCAN_HEIGHT)
+        val position = replayPositionReader.readPosition(counterCrop)
+        counterCrop.recycle()
+        return position
     }
 
-    private fun scanDiffCells(
-        retriever: MediaMetadataRetriever,
-        sampleTimesMs: List<Long>,
-        boardRect: IntRect
-    ): List<CellCoordinate?> {
-        val diffCells = mutableListOf<CellCoordinate?>()
-        var previous: FloatArray? = null
-
-        for (timeMs in sampleTimesMs) {
-            val thumb = retriever.getScaledFrameAtTime(
-                timeMs * 1000,
-                MediaMetadataRetriever.OPTION_CLOSEST,
-                SCAN_WIDTH,
-                SCAN_HEIGHT
-            )
-            val gray = thumb?.let { toGrayFloatArray(it, boardRect) }
-            thumb?.recycle()
-
-            if (previous != null && gray != null) {
-                diffCells.add(diffCentroidCell(previous, gray, boardRect))
-            }
-            if (gray != null) previous = gray
-        }
-
-        return diffCells
-    }
-
-    /**
-     * 진단용 - 바뀐 칸이 어느 프레임에서 어디로 넘어갔는지 죽 나열합니다. 특정 수가 안
-     * 잡히는 문제를 볼 때, 그 수의 도착 칸이 아예 여기 없다면 정지 프레임을 못 찾은
-     * 것이고(원인 A), 있는데 인식이 틀렸다면 인식 자체 문제입니다(원인 B).
-     */
-    private fun logCellTransitions(diffCells: List<CellCoordinate?>) {
-        val entries = diffCells.mapIndexedNotNull { k, cell -> cell?.let { "$k:$it" } }
-        Log.d(TAG, "Diff cells (frame:col,row): ${entries.joinToString(" ")}")
-    }
-
-    /** [rect] 안쪽만 잘라 그레이스케일 밝기값을 뽑습니다 - 판 밖 UI 움직임은 걸러냅니다. */
-    private fun toGrayFloatArray(bitmap: Bitmap, rect: IntRect): FloatArray {
-        val w = rect.width()
-        val h = rect.height()
-        if (w <= 0 || h <= 0) return FloatArray(0)
-
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, rect.left, rect.top, w, h)
-        return FloatArray(pixels.size) { i ->
-            val p = pixels[i]
-            val r = (p shr 16) and 0xFF
-            val g = (p shr 8) and 0xFF
-            val b = p and 0xFF
-            (r + g + b) / 3f
-        }
-    }
-
-    /**
-     * 밝기 차이가 [PIXEL_DIFF_THRESHOLD] 를 넘는 픽셀들의 무게중심을 판의 칸 좌표로
-     * 바꿉니다. 노이즈 수준이면(바뀐 픽셀이 거의 없으면) null.
-     */
-    private fun diffCentroidCell(a: FloatArray, b: FloatArray, boardRect: IntRect): CellCoordinate? {
-        val width = boardRect.width()
-        if (a.size != b.size || width <= 0) return null
-
-        var sumX = 0.0
-        var sumY = 0.0
-        var count = 0
-
-        for (i in a.indices) {
-            if (abs(a[i] - b[i]) > PIXEL_DIFF_THRESHOLD) {
-                sumX += i % width
-                sumY += i / width
-                count++
-            }
-        }
-
-        if (count < MIN_CHANGED_PIXELS) return null
-
-        val centroidX = sumX / count
-        val centroidY = sumY / count
-        val col = ((centroidX / boardRect.width()) * BOARD_COLS).toInt().coerceIn(0, BOARD_COLS - 1)
-        val row = ((centroidY / boardRect.height()) * BOARD_ROWS).toInt().coerceIn(0, BOARD_ROWS - 1)
-        return CellCoordinate(col, row)
+    /** 화면 비율로 수 번호 표시 영역만 잘라냅니다. */
+    private fun cropCounterRegion(bitmap: Bitmap): Bitmap {
+        val left = (bitmap.width * COUNTER_LEFT_RATIO).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (bitmap.height * COUNTER_TOP_RATIO).toInt().coerceIn(0, bitmap.height - 1)
+        val right = (bitmap.width * COUNTER_RIGHT_RATIO).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = (bitmap.height * COUNTER_BOTTOM_RATIO).toInt().coerceIn(top + 1, bitmap.height)
+        return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
     }
 }
 
-/** 판 위 한 칸의 좌표(열/행, 0-based). */
-internal data class CellCoordinate(val col: Int, val row: Int) {
-    /** [other] 가 이 칸에서 [tolerance] 칸 이내(체비셰프 거리)이면 true. */
-    fun isNear(other: CellCoordinate, tolerance: Int): Boolean =
-        abs(col - other.col) <= tolerance && abs(row - other.row) <= tolerance
-}
-
-/**
- * 이 파일만의 단순 사각형. `android.graphics.Rect` 는 안드로이드 프레임워크가 있어야
- * 동작해서(순수 JVM 단위 테스트에서 못 씀) 대신 씁니다.
- */
-internal data class IntRect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
-    fun width() = right - left
-    fun height() = bottom - top
-
-    fun clampTo(maxWidth: Int, maxHeight: Int) = IntRect(
-        left.coerceIn(0, maxWidth),
-        top.coerceIn(0, maxHeight),
-        right.coerceIn(0, maxWidth),
-        bottom.coerceIn(0, maxHeight)
-    )
-}
+/** OCR로 읽은 "지금 수" 값이 표본 하나 동안 계속 이어지는 구간. */
+internal data class Plateau(val value: Int, val sampleIndices: List<Int>)

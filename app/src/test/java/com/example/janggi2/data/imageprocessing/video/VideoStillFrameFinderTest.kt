@@ -4,90 +4,102 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * [VideoStillFrameFinder.pickSettledFrameIndices] 만 따로 검증합니다 - 실제 디코딩·판
- * 탐지([VideoStillFrameFinder.findStillFrames])는 안드로이드 프레임워크가 있어야 해서
- * JVM 단위 테스트로는 못 돌리고 실기기 확인으로 대신합니다. 순수 로직은 companion
- * object 에 있어 인스턴스(= Context) 없이도 테스트할 수 있습니다.
+ * [VideoStillFrameFinder] 의 순수 로직(고원 묶기·대표 표본 고르기·1수 표시 보정)만 따로
+ * 검증합니다. 실제 디코딩·OCR([VideoStillFrameFinder.findStillFrames])은 안드로이드
+ * 프레임워크가 있어야 해서 JVM 단위 테스트로는 못 돌리고 실기기 확인으로 대신합니다.
  */
 class VideoStillFrameFinderTest {
 
-    private fun cell(col: Int, row: Int) = CellCoordinate(col, row)
+    // --- groupPlateaus: OCR로 읽은 값이 이어지는 구간(고원)으로 묶기 ---
 
     @Test
-    fun `같은 칸이 계속 바뀌는 동안은 한 사건으로 묶고, 칸이 넘어가면 그 직전 프레임을 고른다`() {
-        // 칸(0,0) 근처가 프레임 0->3 사이 계속 바뀌다가, 프레임 3->4 에서 칸(8,9)로 넘어갑니다.
-        val diffCells = listOf(
-            cell(0, 0), // 프레임0->1
-            cell(0, 0), // 프레임1->2
-            cell(1, 0), // 프레임2->3 - 허용 범위(1칸) 안이라 같은 사건
-            cell(8, 9), // 프레임3->4 - 칸이 확실히 넘어감
-            cell(8, 9)  // 프레임4->5
+    fun `같은 값이 이어지는 표본들을 하나의 고원으로 묶는다`() {
+        val currents = listOf(5, 5, 5, 6, 6)
+
+        val plateaus = VideoStillFrameFinder.groupPlateaus(currents)
+
+        assertEquals(
+            listOf(Plateau(5, listOf(0, 1, 2)), Plateau(6, listOf(3, 4))),
+            plateaus
+        )
+    }
+
+    @Test
+    fun `읽기 실패(null)는 고원을 끊지 않고 건너뛴다`() {
+        val currents = listOf(5, null, 5, null, null, 6)
+
+        val plateaus = VideoStillFrameFinder.groupPlateaus(currents)
+
+        assertEquals(
+            listOf(Plateau(5, listOf(0, 2)), Plateau(6, listOf(5))),
+            plateaus
+        )
+    }
+
+    @Test
+    fun `목록이 전부 null 이면 고원이 없다`() {
+        val plateaus = VideoStillFrameFinder.groupPlateaus(listOf(null, null))
+
+        assertEquals(emptyList<Plateau>(), plateaus)
+    }
+
+    // --- correctFirstMoveLabel: 대기화면(0) 다음 "전체 수로 잘못 표시된 1수" 보정 ---
+    // "전체 수" OCR 값은 신뢰하지 않고(실측상 자주 오독됨), 수 번호가 항상 증가한다는
+    // 사실만으로 판단합니다.
+
+    @Test
+    fun `대기화면 바로 다음 고원이 그 다음 고원보다 크면(감소) 1수로 바로잡는다`() {
+        val plateaus = listOf(
+            Plateau(0, listOf(0, 1)),   // 대기 화면
+            Plateau(45, listOf(2, 3)),  // 실제로는 1수인데 45로 잘못 표시됨
+            Plateau(2, listOf(4, 5))    // 45 -> 2 로 감소 - 비정상
         )
 
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(diffCells, cellTolerance = 1)
+        val corrected = VideoStillFrameFinder.correctFirstMoveLabel(plateaus)
 
-        // 0(시작) · 3(칸(0,0) 쪽의 마지막 정지) · 5(영상 끝)
-        assertEquals(listOf(0, 3, 5), picked)
+        assertEquals(
+            listOf(
+                Plateau(0, listOf(0, 1)),
+                Plateau(1, listOf(2, 3)),
+                Plateau(2, listOf(4, 5))
+            ),
+            corrected
+        )
     }
 
     @Test
-    fun `바뀐 게 없으면(null) 그 프레임은 건너뛰고 사건을 끊지 않는다`() {
-        val diffCells = listOf(
-            cell(0, 0),
-            null,
-            null,
-            cell(8, 9)
+    fun `대기화면이 없으면 보정하지 않는다`() {
+        val plateaus = listOf(Plateau(2, listOf(0)), Plateau(3, listOf(1)))
+
+        val corrected = VideoStillFrameFinder.correctFirstMoveLabel(plateaus)
+
+        assertEquals(plateaus, corrected)
+    }
+
+    @Test
+    fun `대기화면 다음 고원이 이미 정상적으로 증가하면 보정하지 않는다`() {
+        val plateaus = listOf(
+            Plateau(0, listOf(0)),
+            Plateau(1, listOf(1)),
+            Plateau(2, listOf(2))
         )
 
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(diffCells, cellTolerance = 1)
+        val corrected = VideoStillFrameFinder.correctFirstMoveLabel(plateaus)
 
-        // null 두 개는 그냥 지나가고, 칸(0,0)에서 칸(8,9)로 바로 넘어간 것으로 봅니다.
-        assertEquals(listOf(0, 1, 4), picked)
+        assertEquals(plateaus, corrected)
     }
 
-    @Test
-    fun `내내 한 칸만 바뀌면 처음과 끝만 고른다`() {
-        val diffCells = listOf(cell(4, 4), cell(4, 4), cell(4, 4))
-
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(diffCells, cellTolerance = 1)
-
-        assertEquals(listOf(0, 3), picked)
-    }
+    // --- pickRepresentativeIndices: 고원마다 (수 번호, 대표 표본) 뽑기 ---
 
     @Test
-    fun `목록이 비어 있으면 처음 프레임만 고른다`() {
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(emptyList())
-
-        assertEquals(listOf(0), picked)
-    }
-
-    @Test
-    fun `허용 범위를 벗어나면 한 칸만 옮겨도 사건이 끊긴다`() {
-        val diffCells = listOf(
-            cell(4, 4),
-            cell(4, 4),
-            cell(6, 4) // tolerance=1 이면 2칸 차이라 넘어간 것으로 봄
+    fun `고원마다 그 값이 처음 나타난(수 번호가 막 바뀐) 표본을 대표로 뽑는다`() {
+        val plateaus = listOf(
+            Plateau(1, listOf(0, 1, 2)),
+            Plateau(2, listOf(3, 4))
         )
 
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(diffCells, cellTolerance = 1)
+        val representatives = VideoStillFrameFinder.pickRepresentativeIndices(plateaus)
 
-        assertEquals(listOf(0, 2, 3), picked)
-    }
-
-    @Test
-    fun `연속으로 살짝씩 옮겨가면(대각선 등) 매번 최신 칸 기준으로 계속 같은 사건이다`() {
-        // (0,0) -> (1,0) -> (2,0) 처럼 한 칸씩 이어지면 각 단계는 이전 단계와 tolerance
-        // 안이라 끊기지 않아야 합니다(누적 거리가 아니라 직전 칸과만 비교).
-        val diffCells = listOf(
-            cell(0, 0),
-            cell(1, 0),
-            cell(2, 0),
-            cell(3, 0),
-            cell(8, 9) // 확실히 다른 자리
-        )
-
-        val picked = VideoStillFrameFinder.pickSettledFrameIndices(diffCells, cellTolerance = 1)
-
-        assertEquals(listOf(0, 4, 5), picked)
+        assertEquals(listOf(1 to 0, 2 to 3), representatives)
     }
 }
