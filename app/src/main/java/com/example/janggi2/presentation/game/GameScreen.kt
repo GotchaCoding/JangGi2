@@ -69,6 +69,7 @@ fun GameScreen(
     viewModel: GameViewModel = viewModel(),
     onNavigateToSavedGames: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
+    onNavigateToVideoImport: () -> Unit = {},
     onNavigateToDebug: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -211,6 +212,9 @@ fun GameScreen(
                     },
                     onImportClick = {
                         onNavigateToImport()
+                    },
+                    onVideoImportClick = {
+                        onNavigateToVideoImport()
                     },
                     onResetClick = {
                         viewModel.onEvent(GameUiEvent.ResetGame)

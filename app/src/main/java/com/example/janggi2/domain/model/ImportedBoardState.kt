@@ -9,6 +9,22 @@ data class ImportedBoardState(
     val overallConfidence: Float,
     val gridDetected: Boolean
 ) {
+    companion object {
+        /**
+         * 이 신뢰도 미만인 검출은 버립니다. 배경 노이즈(나무결 등)를 기물로 오검출한
+         * 사례의 finalConfidence 이론상 최댓값이 0.7625였던 반면, 정상 검출은 실측상
+         * 대부분 0.82~1.00이라 그 사이인 0.75를 문턱으로 씁니다.
+         */
+        const val MIN_ACCEPTED_CONFIDENCE = 0.75f
+
+        /**
+         * [MIN_ACCEPTED_CONFIDENCE] 미만인 검출을 제거합니다. 사진·동영상 불러오기가
+         * 공유합니다.
+         */
+        fun filterByConfidence(detected: Map<Position, DetectedPiece>): Map<Position, DetectedPiece> =
+            detected.filterValues { it.confidence >= MIN_ACCEPTED_CONFIDENCE }
+    }
+
     /**
      * Validates that the detected board has required pieces.
      * Returns error message if validation fails, null if valid.

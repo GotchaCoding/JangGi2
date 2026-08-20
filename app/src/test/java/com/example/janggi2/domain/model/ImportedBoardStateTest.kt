@@ -116,4 +116,40 @@ class ImportedBoardStateTest {
         assertEquals(Player.HAN, imported.detectedBottomPlayer())
         assertEquals(Player.HAN, imported.toImportedGameResult().viewpoint)
     }
+
+    // --- filterByConfidence: 신뢰도 하한선 미만 검출 제거 ---
+
+    @Test
+    fun `신뢰도가 문턱(0-75) 미만인 검출은 제거된다`() {
+        val below = Piece.Soldier(Player.HAN, Position(7, 8))
+        val detected = mapOf(below.position to detected(below, confidence = 0.70f))
+
+        val filtered = ImportedBoardState.filterByConfidence(detected)
+
+        assertEquals(emptyMap<Position, DetectedPiece>(), filtered)
+    }
+
+    @Test
+    fun `신뢰도가 문턱(0-75) 이상인 검출은 남는다`() {
+        val above = Piece.Soldier(Player.HAN, Position(7, 8))
+        val detected = mapOf(above.position to detected(above, confidence = 0.75f))
+
+        val filtered = ImportedBoardState.filterByConfidence(detected)
+
+        assertEquals(detected, filtered)
+    }
+
+    @Test
+    fun `신뢰도가 문턱을 넘나드는 검출들 중 넘는 것만 남는다`() {
+        val kept = Piece.Chariot(Player.CHO, Position(0, 0))
+        val dropped = Piece.Soldier(Player.HAN, Position(7, 8))
+        val detected = mapOf(
+            kept.position to detected(kept, confidence = 0.9f),
+            dropped.position to detected(dropped, confidence = 0.5f)
+        )
+
+        val filtered = ImportedBoardState.filterByConfidence(detected)
+
+        assertEquals(mapOf(kept.position to detected(kept, confidence = 0.9f)), filtered)
+    }
 }

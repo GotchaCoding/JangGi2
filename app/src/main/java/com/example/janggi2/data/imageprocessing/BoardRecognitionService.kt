@@ -14,6 +14,31 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * 진영별 기물 최대 개수(왕1·사2·마2·상2·차2·포2·졸5)를 넘는 검출 결과를 정리합니다.
+ * 기물은 잡히기만 하고 늘어나지 않으므로, 같은 진영·종류가 최대치를 넘으면 오검출이
+ * 섞여 있다는 뜻입니다 - 신뢰도가 가장 낮은 초과분부터 제거합니다.
+ */
+internal fun sanitizePieceCounts(
+    detected: List<BoardRecognitionService.DetectedPieceWithPosition>
+): List<BoardRecognitionService.DetectedPieceWithPosition> {
+    val maxCounts = mapOf(
+        Piece.General::class to 1,
+        Piece.Guard::class to 2,
+        Piece.Horse::class to 2,
+        Piece.Elephant::class to 2,
+        Piece.Chariot::class to 2,
+        Piece.Cannon::class to 2,
+        Piece.Soldier::class to 5
+    )
+    return detected
+        .groupBy { it.piece.player to it.piece::class }
+        .flatMap { (key, group) ->
+            val max = maxCounts[key.second] ?: group.size
+            if (group.size <= max) group else group.sortedByDescending { it.confidence }.take(max)
+        }
+}
+
+/**
  * 장기판 인식 서비스
  *
  * 선 검출 기반 정확한 기물 인식:
@@ -49,6 +74,19 @@ class BoardRecognitionService @Inject constructor(
      * @return Result containing detected pieces
      */
     suspend fun extractText(imageUri: Uri): Result<ExtractedText> {
+        val bitmap = loadAndDownsampleImage(imageUri)
+            ?: return Result.failure(Exception("이미지를 불러올 수 없습니다"))
+        return extractFromBitmap(bitmap)
+    }
+
+    /**
+     * [extractText] 와 같은 인식을 이미 메모리에 있는 [Bitmap] 에 대해 돌립니다.
+     *
+     * 동영상 불러오기가 이 진입점을 씁니다 - 동영상 프레임은 `Uri` 로 감쌀 이유가 없어
+     * `Bitmap` 을 바로 넘깁니다. `Uri` 를 다루는 부분(파일 읽기·다운샘플)은
+     * [loadAndDownsampleImage] 뿐이고 그 아래는 원래도 전부 `Bitmap` 기준이었습니다.
+     */
+    suspend fun extractFromBitmap(bitmap: Bitmap): Result<ExtractedText> {
         return try {
             Log.d(TAG, "=== Board Recognition Started ===")
 
@@ -57,10 +95,6 @@ class BoardRecognitionService @Inject constructor(
             if (!pieceDetector.isTemplateInitialized()) {
                 initializeTemplatesFromBundledAsset()
             }
-
-            // 1. Load image
-            val bitmap = loadAndDownsampleImage(imageUri)
-                ?: return Result.failure(Exception("이미지를 불러올 수 없습니다"))
 
             Log.d(TAG, "Image size: ${bitmap.width}x${bitmap.height}")
 
@@ -73,13 +107,14 @@ class BoardRecognitionService @Inject constructor(
             if (USE_LINE_DETECTION) {
                 val lineResult = tryLineBasedDetection(bitmap, boardRegion)
                 if (lineResult != null) {
-                    return Result.success(lineResult)
+                    return Result.success(lineResult.copy(detectedPieces = sanitizePieceCounts(lineResult.detectedPieces)))
                 }
                 Log.w(TAG, "Line-based detection failed, falling back to grid method")
             }
 
             // 4. 폴백: 기존 균등 분할 방식
             val fallbackResult = detectWithGridMethod(bitmap, boardRegion)
+                .let { it.copy(detectedPieces = sanitizePieceCounts(it.detectedPieces)) }
 
             if (fallbackResult.detectedPieces.isEmpty()) {
                 return Result.failure(Exception("기물을 감지하지 못했습니다"))
