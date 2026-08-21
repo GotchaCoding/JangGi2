@@ -12,10 +12,11 @@ data class ImportedBoardState(
     companion object {
         /**
          * 이 신뢰도 미만인 검출은 버립니다. 배경 노이즈(나무결 등)를 기물로 오검출한
-         * 사례의 finalConfidence 이론상 최댓값이 0.7625였던 반면, 정상 검출은 실측상
-         * 대부분 0.82~1.00이라 그 사이인 0.75를 문턱으로 씁니다.
+         * 실측 사례(intersection id 76)의 finalConfidence 가 0.765(색상 신뢰도 0.53 +
+         * CNN 분류기가 노이즈를 보고도 100% 확신한 경우)였던 반면, 정상 검출은 실측상
+         * 0.81~1.00이라 그 사이인 0.78을 문턱으로 씁니다.
          */
-        const val MIN_ACCEPTED_CONFIDENCE = 0.75f
+        const val MIN_ACCEPTED_CONFIDENCE = 0.78f
 
         /**
          * [MIN_ACCEPTED_CONFIDENCE] 미만인 검출을 제거합니다. 사진·동영상 불러오기가

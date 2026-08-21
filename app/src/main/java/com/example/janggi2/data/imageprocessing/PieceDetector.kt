@@ -37,14 +37,16 @@ class PieceDetector @Inject constructor(
     companion object {
         private const val TAG = "PieceDetector"
 
-        // 기물 검출을 위한 최소 색상 픽셀 비율
-        private const val MIN_PIECE_RATIO = 0.05f
+        // 기물 검출을 위한 최소 색상 픽셀 비율 (테두리에서 우세색이 이 비율 미만이면
+        // 배경 노이즈로 보고 EMPTY 처리 - 실측상 정상 검출은 30% 이상, 오검출은 6% 안팎)
+        private const val MIN_PIECE_RATIO = 0.15f
 
         // 보드 배경색과의 RGB 거리 임계값 (이 이상 차이나면 "보드색이 아님" = 기물로 추정)
         private const val BOARD_COLOR_DISTANCE_THRESHOLD = 45.0
 
         // 교차점 주변에서 보드색이 아닌 픽셀의 비율이 이 값을 넘으면 기물이 있다고 판단
-        private const val PIECE_FOREIGN_RATIO_THRESHOLD = 0.35f
+        // (= 보드 배경색과 일치하는 비율이 60% 미만이면 기물로 판단, 1 - 0.60 = 0.40)
+        private const val PIECE_FOREIGN_RATIO_THRESHOLD = 0.40f
 
         // TEMP DEBUG: 크롭된 이미지를 눈으로 확인하기 위한 덤프 경로
         private const val DEBUG_DUMP_DIR = "/sdcard/Android/data/com.example.janggi2/files/debug_crops"

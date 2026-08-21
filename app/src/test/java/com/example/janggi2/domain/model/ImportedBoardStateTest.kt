@@ -120,7 +120,7 @@ class ImportedBoardStateTest {
     // --- filterByConfidence: 신뢰도 하한선 미만 검출 제거 ---
 
     @Test
-    fun `신뢰도가 문턱(0-75) 미만인 검출은 제거된다`() {
+    fun `신뢰도가 문턱(0-78) 미만인 검출은 제거된다`() {
         val below = Piece.Soldier(Player.HAN, Position(7, 8))
         val detected = mapOf(below.position to detected(below, confidence = 0.70f))
 
@@ -130,13 +130,29 @@ class ImportedBoardStateTest {
     }
 
     @Test
-    fun `신뢰도가 문턱(0-75) 이상인 검출은 남는다`() {
+    fun `신뢰도가 문턱(0-78) 이상인 검출은 남는다`() {
         val above = Piece.Soldier(Player.HAN, Position(7, 8))
-        val detected = mapOf(above.position to detected(above, confidence = 0.75f))
+        val detected = mapOf(above.position to detected(above, confidence = 0.78f))
 
         val filtered = ImportedBoardState.filterByConfidence(detected)
 
         assertEquals(detected, filtered)
+    }
+
+    @Test
+    fun `실측된 076번 오검출(신뢰도 0-765)은 제거되고 정상 검출(0-81)은 남는다`() {
+        // intersection id 76 실측값: 색상 신뢰도 0.53 + CNN 분류기 과확신 1.00의 평균
+        val phantom = Piece.Soldier(Player.HAN, Position(4, 8))
+        // 로그로 확인된 정상 검출 최저치
+        val real = Piece.General(Player.CHO, Position(3, 8))
+        val detected = mapOf(
+            phantom.position to detected(phantom, confidence = 0.765f),
+            real.position to detected(real, confidence = 0.81f)
+        )
+
+        val filtered = ImportedBoardState.filterByConfidence(detected)
+
+        assertEquals(mapOf(real.position to detected(real, confidence = 0.81f)), filtered)
     }
 
     @Test
