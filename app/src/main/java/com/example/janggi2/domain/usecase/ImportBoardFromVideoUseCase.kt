@@ -70,9 +70,15 @@ sealed class VideoImportProgress {
  * 3수 프레임입니다 - 1수 프레임은 화면 표시 특성상 가장 불안정한 자리라, 체크포인트로
  * 쓸 일 자체가 없어 자동으로 안 쓰입니다(특별한 예외 처리가 필요 없습니다).
  *
- * 체크포인트 프레임을 OCR이 통째로 못 읽었으면(예: 4수 프레임이 아예 없음) 그 수는
- * "no data"로 건너뛰고, 확정된 판은 그대로 유지한 채 다음 수로 넘어갑니다 - 그 사이
- * 실제로 다른 수가 더 있었다면 다음 체크포인트와의 비교에서 자연히 걸러집니다.
+ * **한 수 쉼과 체크포인트 번호 생략**: 이 리플레이 화면은 한 수 쉼이 발생하면 그 수
+ * 번호 표시 자체를 건너뛰고 카운터가 바로 다음 번호로 넘어갑니다(예: 30수가 한 수
+ * 쉼이면 화면에 "30"이 아예 안 뜨고 "29" 다음 바로 "31"이 뜸). 그래서 position+1
+ * 체크포인트 프레임이 없으면 position+2 프레임을 대신 씁니다 - 한 수 쉼은 양쪽 진영
+ * 다 기물 변화가 없으므로 mover 쪽 상태는 position+2 프레임에서도 그대로 유효합니다.
+ *
+ * 체크포인트 프레임을 OCR이 통째로 못 읽었으면(position+1, position+2 프레임 둘 다
+ * 없음) 그 수는 "no data"로 건너뛰고, 확정된 판은 그대로 유지한 채 다음 수로 넘어갑니다
+ * - 그 사이 실제로 다른 수가 더 있었다면 다음 체크포인트와의 비교에서 자연히 걸러집니다.
  *
  * 사진 불러오기와 같은 방침입니다 - 인식이 안 되는 구간은 건너뛰고 되는 데까지만
  * 넣습니다. 별도 수동 보정 화면은 없습니다.
@@ -122,16 +128,18 @@ class ImportBoardFromVideoUseCase @Inject constructor(
     }
 
     fun import(videoUri: Uri): Flow<VideoImportProgress> = flow {
+        // TEMP DEBUG: 이번 실행 전에 이전 덤프를 지워서, 이전 영상 이미지와 섞이지 않게 합니다.
+        // findStillFrames() 호출 전에 지워야 합니다 - 그 안에서도(빈 구간 재검색 시)
+        // 디버그 이미지를 저장하는데, 여기서 늦게 지우면 방금 저장한 것까지 같이 지워집니다.
+        context.getExternalFilesDir(null)?.let { base ->
+            File(base, DEBUG_DUMP_DIR_NAME).deleteRecursively()
+        }
+
         val frames = stillFrameFinder.findStillFrames(videoUri)
         Log.d(TAG, "Found ${frames.size} still frame candidates")
         if (frames.size < 2) {
             emit(VideoImportProgress.Failed("정지 구간을 찾지 못했습니다. 다른 영상으로 시도해 주세요."))
             return@flow
-        }
-
-        // TEMP DEBUG: 이번 실행 전에 이전 덤프를 지워서, 이전 영상 이미지와 섞이지 않게 합니다.
-        context.getExternalFilesDir(null)?.let { base ->
-            File(base, DEBUG_DUMP_DIR_NAME).deleteRecursively()
         }
 
         // 프레임마다 무거운 인식은 Default 로 튀었다가 emit 전에 반드시 돌아와야 합니다 -
@@ -182,10 +190,18 @@ class ImportBoardFromVideoUseCase @Inject constructor(
 
         for (position in 1..maxAttempt) {
             val mover = if (position % 2 == 1) Player.CHO else Player.HAN
-            val checkpoint = recognizedByPosition[position + 1]
+            // 보통 체크포인트는 position+1 프레임입니다. 그런데 이 리플레이 화면은 한
+            // 수 쉼이 발생하면 그 수 번호 표시 자체를 건너뛰고 카운터가 바로 다음
+            // 번호로 넘어갑니다(예: 30수가 한 수 쉼이면 화면에 "30"이 아예 안 뜨고
+            // "29" 다음 바로 "31"이 뜸) - 그래서 position+1 프레임이 없으면 position+2
+            // 프레임을 대신 씁니다. 한 수 쉼은 양쪽 진영 다 기물 변화가 없으므로, mover
+            // 쪽 상태는 position+2 프레임에서도 그대로 유효합니다. position+1 자체는
+            // 이 루프의 다음 바퀴(position+1)에서 정상적으로(체크포인트=position+2) 다시
+            // 처리되므로 여기서 따로 손댈 필요가 없습니다.
+            val checkpoint = recognizedByPosition[position + 1] ?: recognizedByPosition[position + 2]
             if (checkpoint == null) {
                 skipped++
-                Log.d(TAG, "Position $position: no checkpoint frame at ${position + 1}, skipped")
+                Log.d(TAG, "Position $position: no checkpoint frame at ${position + 1} or ${position + 2}, skipped")
                 continue
             }
 
@@ -211,7 +227,7 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                 logMove(position, move, isPass = false)
             } else {
                 skipped++
-                Log.d(TAG, "Position $position: no clean move against checkpoint ${position + 1}, skipped")
+                Log.d(TAG, "Position $position: no clean move against checkpoint ${checkpoint.position}, skipped")
             }
         }
         Log.d(TAG, "Recovered $recovered move(s) up to position $maxAttempt ($skipped position(s) unmatched)")

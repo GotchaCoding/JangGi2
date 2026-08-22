@@ -102,4 +102,61 @@ class VideoStillFrameFinderTest {
 
         assertEquals(listOf(1 to 0, 2 to 3), representatives)
     }
+
+    // --- dropOutOfOrderPlateaus: 시간순을 유지하면서 값이 계속 증가하는 것만 남기기 ---
+    // (빠른 스크러빙·저화질 영상에서 OCR이 같은 수 번호를 시간상 여러 지점에서
+    // 중복으로 읽거나 순간적으로 엉뚱한 값을 읽는 경우를 걸러냅니다.)
+
+    @Test
+    fun `계속 증가하는 정상 시퀀스는 그대로 남는다`() {
+        val plateaus = listOf(Plateau(0, listOf(0)), Plateau(1, listOf(1)), Plateau(2, listOf(2)))
+
+        val result = VideoStillFrameFinder.dropOutOfOrderPlateaus(plateaus)
+
+        assertEquals(plateaus, result)
+    }
+
+    @Test
+    fun `이미 지나간 값이 시간상 나중에 또 나오면(중복 오독) 나중 것은 버린다`() {
+        // 실측 사례 재현: 6이 여러 시점에서 중복으로 찍힘
+        val plateaus = listOf(
+            Plateau(5, listOf(0)),
+            Plateau(6, listOf(1)),
+            Plateau(7, listOf(2)),
+            Plateau(6, listOf(3)),
+            Plateau(6, listOf(4)),
+            Plateau(8, listOf(5))
+        )
+
+        val result = VideoStillFrameFinder.dropOutOfOrderPlateaus(plateaus)
+
+        assertEquals(
+            listOf(Plateau(5, listOf(0)), Plateau(6, listOf(1)), Plateau(7, listOf(2)), Plateau(8, listOf(5))),
+            result
+        )
+    }
+
+    @Test
+    fun `순간적으로 엉뚱한 값을 잘못 읽은 고원은 버리고 진짜 긴 수순을 남긴다`() {
+        // 실측 사례 축약 재현: 6 대신 39가 한 번 잘못 찍혀도, 그 뒤로 이어지는
+        // 진짜 수순(7,8,9...)이 훨씬 길어서 39를 포함한 사슬을 이긴다.
+        val plateaus = listOf(
+            Plateau(5, listOf(0)),
+            Plateau(39, listOf(1)), // 오독
+            Plateau(6, listOf(2)),
+            Plateau(7, listOf(3)),
+            Plateau(8, listOf(4)),
+            Plateau(9, listOf(5))
+        )
+
+        val result = VideoStillFrameFinder.dropOutOfOrderPlateaus(plateaus)
+
+        assertEquals(
+            listOf(
+                Plateau(5, listOf(0)), Plateau(6, listOf(2)), Plateau(7, listOf(3)),
+                Plateau(8, listOf(4)), Plateau(9, listOf(5))
+            ),
+            result
+        )
+    }
 }

@@ -39,6 +39,17 @@ class VideoStillFrameFinder @Inject constructor(
         private const val MAX_SCAN_FRAMES = 800
 
         /**
+         * 1차로 뼈대(LIS로 걸러낸 확정 수순)를 만든 뒤, 그 사이에 빠진 수 번호가 있으면
+         * 그 구간만 이 간격으로 다시 훑습니다. 1차 간격([SCAN_INTERVAL_MS])보다 훨씬
+         * 촘촘합니다 - 빈 구간은 대개 몇 개 안 되고 폭도 좁아서, 전체를 다시 훑는
+         * 것보다 훨씬 저렴하게 훨씬 정밀히 찾을 수 있습니다.
+         */
+        private const val GAP_FILL_STEP_MS = 2L
+
+        /** 이보다 넓은 구간은 재스캔하지 않습니다 - 처리 시간이 끝없이 늘어나는 것을 막습니다. */
+        private const val GAP_FILL_MAX_WINDOW_MS = 3000L
+
+        /**
          * 수 번호 표시 영역을 화면 비율로 자릅니다(기기·해상도가 달라도 비율은 비슷할
          * 것으로 가정). 실측 샘플 영상(1080x2340)에서 "14 / 49" 표시가 대략 이 안에
          * 들어오는 걸 확인하고, 여유를 두어 넓혔습니다.
@@ -100,6 +111,41 @@ class VideoStillFrameFinder @Inject constructor(
          */
         internal fun pickRepresentativeIndices(plateaus: List<Plateau>): List<Pair<Int, Int>> =
             plateaus.map { it.value to it.sampleIndices.first() }
+
+        /**
+         * 시간 순서를 유지한 채, 값이 계속 증가하는 가장 긴 부분열(최장 증가 부분열,
+         * LIS)만 남깁니다. 스크러빙이 빠르거나 화질이 나쁜 영상에서는 OCR이 같은 값을
+         * 시간상 여러 지점에서 중복으로 읽거나(예: "6"이 세 번 찍힘) 순간적으로 엉뚱한
+         * 값을 잘못 읽어내는 경우가 있는데, 이런 값들이 섞인 채로 값 기준 정렬만 하면
+         * 실제 영상 순서와 안 맞는 목록이 됩니다. LIS는 전체를 보고 시간순으로 값이
+         * 계속 늘어나는 가장 긴 사슬을 고르므로, 진짜 수순처럼 촘촘하게 이어지는 긴
+         * 사슬이 짧은 오독/중복 사슬을 항상 이깁니다.
+         */
+        internal fun dropOutOfOrderPlateaus(plateaus: List<Plateau>): List<Plateau> {
+            val n = plateaus.size
+            if (n == 0) return emptyList()
+            val chainLength = IntArray(n) { 1 }
+            val previous = IntArray(n) { -1 }
+            for (i in 1 until n) {
+                for (j in 0 until i) {
+                    if (plateaus[j].value < plateaus[i].value && chainLength[j] + 1 > chainLength[i]) {
+                        chainLength[i] = chainLength[j] + 1
+                        previous[i] = j
+                    }
+                }
+            }
+            var bestEnd = 0
+            for (i in 1 until n) {
+                if (chainLength[i] > chainLength[bestEnd]) bestEnd = i
+            }
+            val chain = mutableListOf<Plateau>()
+            var cur = bestEnd
+            while (cur != -1) {
+                chain.add(plateaus[cur])
+                cur = previous[cur]
+            }
+            return chain.asReversed()
+        }
     }
 
     /** 정지 프레임 하나 - OCR로 읽은(그리고 필요시 보정한) 실제 수 번호가 붙어 있습니다. */
@@ -125,20 +171,28 @@ class VideoStillFrameFinder @Inject constructor(
             val currents = readings.map { it?.first }
 
             val rawPlateaus = groupPlateaus(currents)
-            val plateaus = correctFirstMoveLabel(rawPlateaus)
-            val representatives = pickRepresentativeIndices(plateaus).sortedBy { it.first }
+            val corrected = correctFirstMoveLabel(rawPlateaus)
+            // LIS 로 걸러낸 결과는 이미 시간순(=값도 자연히 오름차순)이라 값 기준으로
+            // 다시 정렬하지 않습니다 - 정렬을 하면 중복/오독으로 시간순이 깨진 원본이
+            // 뒤섞여 나올 위험이 있습니다.
+            val plateaus = dropOutOfOrderPlateaus(corrected)
+
+            // 뼈대(확정된 수순) - 시간순으로 정렬된 (수 번호, 시각) 쌍.
+            val skeleton = pickRepresentativeIndices(plateaus)
+                .map { (value, sampleIdx) -> value to sampleTimesMs[sampleIdx] }
+            val filled = fillGaps(retriever, skeleton)
+            val representatives = filled.sortedBy { it.first }
 
             Log.d(
                 TAG,
-                "Sampled ${sampleTimesMs.size} frames, ${plateaus.size} plateaus picked: " +
-                    representatives.joinToString(", ") { (position, sampleIdx) ->
-                        "$position@${sampleTimesMs[sampleIdx]}ms"
-                    }
+                "Sampled ${sampleTimesMs.size} frames, ${plateaus.size} plateaus picked " +
+                    "(${filled.size - skeleton.size} gap-filled): " +
+                    representatives.joinToString(", ") { (position, timeMs) -> "$position@${timeMs}ms" }
             )
 
-            representatives.mapNotNull { (position, sampleIdx) ->
+            representatives.mapNotNull { (position, timeMs) ->
                 val bitmap = retriever.getFrameAtTime(
-                    sampleTimesMs[sampleIdx] * 1000,
+                    timeMs * 1000,
                     MediaMetadataRetriever.OPTION_CLOSEST
                 ) ?: return@mapNotNull null
                 StillFrame(bitmap, position)
@@ -149,6 +203,57 @@ class VideoStillFrameFinder @Inject constructor(
         } finally {
             retriever.release()
         }
+    }
+
+    /**
+     * 뼈대(확정된 수순) 사이에 빠진 수 번호가 있으면, 그 구간(양 끝 시각 사이)만 촘촘히
+     * 재스캔해서 채워 넣습니다. 수 번호는 대략 균등한 속도로 흘러간다는 전제 하에,
+     * 1차 훑기(10ms 간격)가 놓친 자리를 2차로 훨씬 촘촘하게(2ms 간격) 다시 찾습니다.
+     */
+    private suspend fun fillGaps(
+        retriever: MediaMetadataRetriever,
+        skeleton: List<Pair<Int, Long>>
+    ): List<Pair<Int, Long>> {
+        if (skeleton.size < 2) return skeleton
+        val result = mutableListOf(skeleton.first())
+        for (i in 1 until skeleton.size) {
+            val (prevValue, prevTime) = skeleton[i - 1]
+            val (nextValue, nextTime) = skeleton[i]
+            if (nextValue - prevValue > 1 && nextTime > prevTime &&
+                nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
+            ) {
+                result.addAll(searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime))
+            }
+            result.add(skeleton[i])
+        }
+        return result
+    }
+
+    /**
+     * [prevTime]~[nextTime] 사이를 [GAP_FILL_STEP_MS] 간격으로 훑으며,
+     * [prevValue]와 [nextValue] 사이에 빠진 값들을 찾는 대로 (값, 처음 나타난 시각)
+     * 으로 모읍니다. 값 하나당 여러 번 나타나도 첫 등장만 씁니다 - 나머지 대표
+     * 프레임과 같은 정책입니다.
+     */
+    private suspend fun searchGapForMissingValues(
+        retriever: MediaMetadataRetriever,
+        prevValue: Int,
+        prevTime: Long,
+        nextValue: Int,
+        nextTime: Long
+    ): List<Pair<Int, Long>> {
+        val targets = (prevValue + 1 until nextValue).toMutableSet()
+        val found = mutableMapOf<Int, Long>()
+        var t = prevTime + GAP_FILL_STEP_MS
+        while (t < nextTime && targets.isNotEmpty()) {
+            val reading = readPositionAt(retriever, t)?.first
+            if (reading != null && reading in targets) {
+                found[reading] = t
+                targets.remove(reading)
+            }
+            t += GAP_FILL_STEP_MS
+        }
+        return found.entries.sortedBy { it.value }.map { it.key to it.value }
     }
 
     private fun buildSampleTimes(durationMs: Long): List<Long> {
