@@ -2,6 +2,7 @@ package com.example.janggi2.presentation.game.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
@@ -113,9 +114,14 @@ fun GameControls(
         }
 
         // Middle row: Save, Load, Import, AI Settings
-        Row(
+        // 버튼이 최대 7개까지 늘어날 수 있어(저장/불러오기/사진 불러오기/동영상
+        // 불러오기/AI 리뷰/AI 설정/디버그) 화면 폭에 다 안 들어가면 Row는 그냥 잘리고
+        // 넘친 버튼이 안 보입니다. FlowRow 는 다 안 들어가면 자동으로 다음 줄로
+        // 내려서 항상 모든 버튼이 보이게 합니다.
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             TextButton(onClick = { showSaveDialog = true }) {
                 Text("저장")
