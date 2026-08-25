@@ -10,7 +10,14 @@ import javax.inject.Inject
 class SaveGameUseCase @Inject constructor(
     private val repository: GameRepository
 ) {
-    suspend operator fun invoke(gameState: GameState, name: String): Long {
-        return repository.saveGame(gameState, name)
+    suspend operator fun invoke(
+        gameState: GameState,
+        name: String,
+        choPlayerName: String? = null,
+        hanPlayerName: String? = null,
+        choRank: String? = null,
+        hanRank: String? = null
+    ): Long {
+        return repository.saveGame(gameState, name, choPlayerName, hanPlayerName, choRank, hanRank)
     }
 }

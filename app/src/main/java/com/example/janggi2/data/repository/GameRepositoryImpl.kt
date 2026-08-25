@@ -17,8 +17,15 @@ class GameRepositoryImpl @Inject constructor(
     private val gameMapper: GameMapper
 ) : GameRepository {
 
-    override suspend fun saveGame(gameState: GameState, name: String): Long {
-        val entity = gameMapper.toEntity(gameState, name)
+    override suspend fun saveGame(
+        gameState: GameState,
+        name: String,
+        choPlayerName: String?,
+        hanPlayerName: String?,
+        choRank: String?,
+        hanRank: String?
+    ): Long {
+        val entity = gameMapper.toEntity(gameState, name, choPlayerName, hanPlayerName, choRank, hanRank)
         return gameDao.insertGame(entity)
     }
 
@@ -48,7 +55,11 @@ class GameRepositoryImpl @Inject constructor(
                         savedDate = entity.savedDate,
                         moveCount = entity.moveCount,
                         currentPlayer = entity.currentPlayer,
-                        gameStatus = entity.gameStatus
+                        gameStatus = entity.gameStatus,
+                        choPlayerName = entity.choPlayerName,
+                        hanPlayerName = entity.hanPlayerName,
+                        choRank = entity.choRank,
+                        hanRank = entity.hanRank
                     )
                 }
         }

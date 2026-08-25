@@ -12,7 +12,7 @@ import com.example.janggi2.data.local.database.entity.GameEntity
  */
 @Database(
     entities = [GameEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class JangGiDatabase : RoomDatabase() {
@@ -39,6 +39,19 @@ abstract class JangGiDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE saved_games ADD COLUMN startBoardJson TEXT")
+            }
+        }
+
+        /**
+         * Migration from version 3 to 4: Add choPlayerName, hanPlayerName, choRank,
+         * hanRank columns so a saved 기보 can record who played and their 급수.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE saved_games ADD COLUMN choPlayerName TEXT")
+                db.execSQL("ALTER TABLE saved_games ADD COLUMN hanPlayerName TEXT")
+                db.execSQL("ALTER TABLE saved_games ADD COLUMN choRank TEXT")
+                db.execSQL("ALTER TABLE saved_games ADD COLUMN hanRank TEXT")
             }
         }
     }

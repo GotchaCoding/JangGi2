@@ -24,7 +24,14 @@ class GameMapper {
     /**
      * Converts a GameState to a GameEntity for database storage.
      */
-    fun toEntity(gameState: GameState, name: String): GameEntity {
+    fun toEntity(
+        gameState: GameState,
+        name: String,
+        choPlayerName: String? = null,
+        hanPlayerName: String? = null,
+        choRank: String? = null,
+        hanRank: String? = null
+    ): GameEntity {
         val boardJson = serializeBoard(gameState.board)
         val moveHistoryJson = serializeMoveHistory(gameState.moveHistory)
         val startBoardJson = gameState.startBoard?.let { serializeBoard(it) }
@@ -38,7 +45,11 @@ class GameMapper {
             gameStatus = gameState.status.name,
             winner = gameState.winner?.name,
             moveHistoryJson = moveHistoryJson,
-            startBoardJson = startBoardJson
+            startBoardJson = startBoardJson,
+            choPlayerName = choPlayerName,
+            hanPlayerName = hanPlayerName,
+            choRank = choRank,
+            hanRank = hanRank
         )
     }
 

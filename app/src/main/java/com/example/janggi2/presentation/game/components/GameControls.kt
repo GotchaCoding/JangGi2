@@ -8,11 +8,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.janggi2.presentation.common.ConfirmDialog
 
 private val COMPACT_PADDING = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
 
@@ -37,7 +40,7 @@ fun GameControls(
     canRedo: Boolean,
     onUndoClick: () -> Unit,
     onRedoClick: () -> Unit,
-    onSaveClick: (String) -> Unit,
+    onSaveClick: (name: String, choPlayerName: String?, hanPlayerName: String?, choRank: String?, hanRank: String?) -> Unit,
     onLoadClick: () -> Unit,
     onImportClick: () -> Unit,
     onVideoImportClick: () -> Unit = {},
@@ -55,7 +58,6 @@ fun GameControls(
     modifier: Modifier = Modifier
 ) {
     var showSaveDialog by remember { mutableStateOf(false) }
-    var saveName by remember { mutableStateOf("") }
 
     Column(
         modifier = modifier
@@ -177,8 +179,8 @@ fun GameControls(
     // Save dialog
     if (showSaveDialog) {
         SaveGameDialog(
-            onConfirm = { name ->
-                onSaveClick(name)
+            onConfirm = { name, choPlayerName, hanPlayerName, choRank, hanRank ->
+                onSaveClick(name, choPlayerName, hanPlayerName, choRank, hanRank)
                 showSaveDialog = false
             },
             onDismiss = {
@@ -188,27 +190,100 @@ fun GameControls(
     }
 }
 
+/**
+ * 기보 저장 대화상자. 제목은 필수, 기사 이름·급수는 선택 입력입니다.
+ */
 @Composable
 private fun SaveGameDialog(
-    onConfirm: (String) -> Unit,
+    onConfirm: (name: String, choPlayerName: String?, hanPlayerName: String?, choRank: String?, hanRank: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var gameName by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var choPlayerName by remember { mutableStateOf("") }
+    var hanPlayerName by remember { mutableStateOf("") }
+    var choRank by remember { mutableStateOf("") }
+    var hanRank by remember { mutableStateOf("") }
 
-    ConfirmDialog(
-        title = "게임 저장",
-        message = "저장할 게임 이름을 입력하세요:\n(자동으로 날짜가 포함됩니다)",
-        confirmText = "저장",
-        dismissText = "취소",
-        onConfirm = {
-            val finalName = if (gameName.isBlank()) {
-                "Game ${System.currentTimeMillis()}"
-            } else {
-                gameName
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("기보 저장") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("제목") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = choPlayerName,
+                        onValueChange = { choPlayerName = it },
+                        label = { Text("초 기사") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = choRank,
+                        onValueChange = { choRank = it },
+                        label = { Text("초 급수") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = hanPlayerName,
+                        onValueChange = { hanPlayerName = it },
+                        label = { Text("한 기사") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = hanRank,
+                        onValueChange = { hanRank = it },
+                        label = { Text("한 급수") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
-            onConfirm(finalName)
         },
-        onDismiss = onDismiss
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val finalTitle = title.ifBlank { "Game ${System.currentTimeMillis()}" }
+                    onConfirm(
+                        finalTitle,
+                        choPlayerName.ifBlank { null },
+                        hanPlayerName.ifBlank { null },
+                        choRank.ifBlank { null },
+                        hanRank.ifBlank { null }
+                    )
+                }
+            ) {
+                Text("저장")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        }
     )
 }
 
@@ -220,7 +295,7 @@ fun GameControlsPreview() {
         canRedo = false,
         onUndoClick = {},
         onRedoClick = {},
-        onSaveClick = {},
+        onSaveClick = { _, _, _, _, _ -> },
         onLoadClick = {},
         onImportClick = {},
         onResetClick = {},
