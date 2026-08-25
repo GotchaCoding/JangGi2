@@ -9,12 +9,23 @@ import kotlinx.coroutines.flow.Flow
 interface GameRepository {
 
     /**
-     * Saves a game with the given name.
+     * Saves a game with the given name and optional player info.
      * @param gameState The game state to save
      * @param name The name for this saved game
+     * @param choPlayerName 초쪽 기사 이름
+     * @param hanPlayerName 한쪽 기사 이름
+     * @param choRank 초쪽 기사 급수
+     * @param hanRank 한쪽 기사 급수
      * @return The ID of the saved game
      */
-    suspend fun saveGame(gameState: GameState, name: String): Long
+    suspend fun saveGame(
+        gameState: GameState,
+        name: String,
+        choPlayerName: String? = null,
+        hanPlayerName: String? = null,
+        choRank: String? = null,
+        hanRank: String? = null
+    ): Long
 
     /**
      * Auto-saves the current game state.
@@ -59,5 +70,9 @@ data class SavedGameInfo(
     val savedDate: Long,
     val moveCount: Int,
     val currentPlayer: String,
-    val gameStatus: String
+    val gameStatus: String,
+    val choPlayerName: String? = null,
+    val hanPlayerName: String? = null,
+    val choRank: String? = null,
+    val hanRank: String? = null
 )

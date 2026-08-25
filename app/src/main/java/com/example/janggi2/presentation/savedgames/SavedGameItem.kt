@@ -60,6 +60,16 @@ fun SavedGameItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                // Players, if recorded
+                val playersLine = formatPlayersLine(gameInfo)
+                if (playersLine != null) {
+                    Text(
+                        text = playersLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 // Saved date
                 val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                 val dateString = dateFormat.format(Date(gameInfo.savedDate))
@@ -89,4 +99,23 @@ fun SavedGameItem(
             }
         }
     }
+}
+
+/**
+ * "초 이름(급수) vs 한 이름(급수)" 형태로 기사 정보를 표시합니다.
+ * 아무것도 기록되어 있지 않으면 null을 반환해 줄 자체를 숨깁니다.
+ */
+private fun formatPlayersLine(gameInfo: SavedGameInfo): String? {
+    if (gameInfo.choPlayerName == null && gameInfo.hanPlayerName == null &&
+        gameInfo.choRank == null && gameInfo.hanRank == null
+    ) {
+        return null
+    }
+
+    fun side(label: String, name: String?, rank: String?): String {
+        val playerName = name ?: label
+        return if (rank != null) "$playerName($rank)" else playerName
+    }
+
+    return "${side("초", gameInfo.choPlayerName, gameInfo.choRank)} vs ${side("한", gameInfo.hanPlayerName, gameInfo.hanRank)}"
 }

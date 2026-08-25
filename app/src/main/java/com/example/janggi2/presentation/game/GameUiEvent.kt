@@ -35,9 +35,15 @@ sealed class GameUiEvent {
     data object Redo : GameUiEvent()
 
     /**
-     * User requested to save the game with a custom name.
+     * User requested to save the game with a custom name and optional player info.
      */
-    data class SaveGame(val name: String) : GameUiEvent()
+    data class SaveGame(
+        val name: String,
+        val choPlayerName: String? = null,
+        val hanPlayerName: String? = null,
+        val choRank: String? = null,
+        val hanRank: String? = null
+    ) : GameUiEvent()
 
     /**
      * User requested to enter replay mode.

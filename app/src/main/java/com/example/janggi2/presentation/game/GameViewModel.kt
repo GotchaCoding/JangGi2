@@ -125,7 +125,13 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.DismissGameOverDialog -> dismissGameOverDialog()
             is GameUiEvent.Undo -> undo()
             is GameUiEvent.Redo -> redo()
-            is GameUiEvent.SaveGame -> saveGame(event.name)
+            is GameUiEvent.SaveGame -> saveGame(
+                event.name,
+                event.choPlayerName,
+                event.hanPlayerName,
+                event.choRank,
+                event.hanRank
+            )
             is GameUiEvent.EnterReplayMode -> enterReplayMode()
             is GameUiEvent.ExitReplayMode -> exitReplayMode()
             is GameUiEvent.ReplayFirst -> replayFirst()
@@ -349,10 +355,16 @@ class GameViewModel @Inject constructor(
     /**
      * Saves the current game with a custom name.
      */
-    private fun saveGame(name: String) {
+    private fun saveGame(
+        name: String,
+        choPlayerName: String? = null,
+        hanPlayerName: String? = null,
+        choRank: String? = null,
+        hanRank: String? = null
+    ) {
         viewModelScope.launch {
             try {
-                saveGameUseCase(uiState.value.gameState, name)
+                saveGameUseCase(uiState.value.gameState, name, choPlayerName, hanPlayerName, choRank, hanRank)
                 _uiState.value = _uiState.value.copy(currentGameName = name)
             } catch (e: Exception) {
                 // Handle save error

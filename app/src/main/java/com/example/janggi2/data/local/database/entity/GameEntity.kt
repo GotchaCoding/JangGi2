@@ -23,5 +23,13 @@ data class GameEntity(
      * 표준 배치입니다. [com.example.janggi2.domain.model.GameState.startBoard] 참고 -
      * 이게 없으면 복기/수 기록 이동이 항상 기본 배치로 되감아 실제와 다른 기물이 나옵니다.
      */
-    val startBoardJson: String? = null
+    val startBoardJson: String? = null,
+    /** 초쪽 기사 이름. */
+    val choPlayerName: String? = null,
+    /** 한쪽 기사 이름. */
+    val hanPlayerName: String? = null,
+    /** 초쪽 기사 급수(예: "3급", "아마 1단"). */
+    val choRank: String? = null,
+    /** 한쪽 기사 급수. */
+    val hanRank: String? = null
 )

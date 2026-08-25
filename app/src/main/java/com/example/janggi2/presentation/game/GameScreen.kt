@@ -204,8 +204,10 @@ fun GameScreen(
                     onRedoClick = {
                         viewModel.onEvent(GameUiEvent.Redo)
                     },
-                    onSaveClick = { name ->
-                        viewModel.onEvent(GameUiEvent.SaveGame(name))
+                    onSaveClick = { name, choPlayerName, hanPlayerName, choRank, hanRank ->
+                        viewModel.onEvent(
+                            GameUiEvent.SaveGame(name, choPlayerName, hanPlayerName, choRank, hanRank)
+                        )
                     },
                     onLoadClick = {
                         onNavigateToSavedGames()
