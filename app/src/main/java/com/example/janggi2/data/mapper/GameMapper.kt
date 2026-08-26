@@ -1,12 +1,17 @@
 package com.example.janggi2.data.mapper
 
 import com.example.janggi2.data.local.database.entity.GameEntity
+import com.example.janggi2.data.local.database.entity.GameReviewEntity
+import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.model.MoveQuality
+import com.example.janggi2.domain.model.MoveReview
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
+import com.example.janggi2.domain.repository.SavedReview
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -69,6 +74,91 @@ class GameMapper {
             winner = entity.winner?.let { Player.valueOf(it) },
             startBoard = startBoard
         )
+    }
+
+    /**
+     * Converts a GameState and its [GameReview] to a GameReviewEntity for database storage.
+     */
+    fun toReviewEntity(gameState: GameState, review: GameReview, name: String): GameReviewEntity {
+        val boardJson = serializeBoard(gameState.board)
+        val moveHistoryJson = serializeMoveHistory(gameState.moveHistory)
+        val startBoardJson = gameState.startBoard?.let { serializeBoard(it) }
+        val reviewJson = serializeReview(review)
+
+        return GameReviewEntity(
+            name = name,
+            savedDate = System.currentTimeMillis(),
+            boardStateJson = boardJson,
+            currentPlayer = gameState.currentPlayer.name,
+            moveCount = gameState.getMoveCount(),
+            gameStatus = gameState.status.name,
+            winner = gameState.winner?.name,
+            moveHistoryJson = moveHistoryJson,
+            startBoardJson = startBoardJson,
+            reviewJson = reviewJson
+        )
+    }
+
+    /**
+     * Converts a GameReviewEntity from database back to a [SavedReview].
+     */
+    fun reviewFromEntity(entity: GameReviewEntity): SavedReview {
+        val board = deserializeBoard(entity.boardStateJson)
+        val moveHistory = deserializeMoveHistory(entity.moveHistoryJson)
+        val startBoard = entity.startBoardJson?.let { deserializeBoard(it) }
+
+        val gameState = GameState(
+            board = board,
+            currentPlayer = Player.valueOf(entity.currentPlayer),
+            moveHistory = moveHistory,
+            status = GameStatus.valueOf(entity.gameStatus),
+            winner = entity.winner?.let { Player.valueOf(it) },
+            startBoard = startBoard
+        )
+        val review = deserializeReview(entity.reviewJson, moveHistory)
+
+        return SavedReview(gameState = gameState, review = review)
+    }
+
+    /**
+     * Serializes a [GameReview] to JSON string. [MoveReview.move]/[MoveReview.bestMove] are
+     * dropped - move는 moveHistoryJson에 이미 있고, bestMove는 화면에 쓰이지 않습니다.
+     */
+    private fun serializeReview(review: GameReview): String {
+        val serializableReviews = review.moveReviews.map { mr ->
+            SerializableMoveReview(
+                moveIndex = mr.moveIndex,
+                player = mr.player.name,
+                quality = mr.quality.name,
+                lossCp = mr.lossCp
+            )
+        }
+        return json.encodeToString(serializableReviews)
+    }
+
+    /**
+     * Deserializes JSON string to a [GameReview], reusing the already-deserialized
+     * [moveHistory] to rebuild each [MoveReview.move].
+     */
+    private fun deserializeReview(reviewJson: String, moveHistory: List<Move>): GameReview {
+        return try {
+            val serializableReviews = json.decodeFromString<List<SerializableMoveReview>>(reviewJson)
+            val moveReviews = serializableReviews.mapNotNull { sr ->
+                val move = moveHistory.getOrNull(sr.moveIndex) ?: return@mapNotNull null
+                MoveReview(
+                    moveIndex = sr.moveIndex,
+                    move = move,
+                    player = Player.valueOf(sr.player),
+                    quality = MoveQuality.valueOf(sr.quality),
+                    lossCp = sr.lossCp,
+                    bestMove = null
+                )
+            }
+            GameReview(moveReviews)
+        } catch (e: Exception) {
+            android.util.Log.e("GameMapper", "Failed to deserialize game review: ${e.message}")
+            GameReview(emptyList())
+        }
     }
 
     /**
@@ -202,4 +292,15 @@ private data class SerializableMove(
     // 나중에 추가된 항목이라 예전 저장 데이터에는 없습니다. 기본값이 있어야 읽힙니다.
     val movedPieceType: String? = null,
     val movedPiecePlayer: String? = null
+)
+
+/**
+ * Serializable representation of a [MoveReview] for JSON storage.
+ */
+@Serializable
+private data class SerializableMoveReview(
+    val moveIndex: Int,
+    val player: String,
+    val quality: String,
+    val lossCp: Int
 )

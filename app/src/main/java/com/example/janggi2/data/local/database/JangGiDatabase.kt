@@ -5,18 +5,21 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.janggi2.data.local.database.dao.GameDao
+import com.example.janggi2.data.local.database.dao.GameReviewDao
 import com.example.janggi2.data.local.database.entity.GameEntity
+import com.example.janggi2.data.local.database.entity.GameReviewEntity
 
 /**
  * Room database for JangGi2 app.
  */
 @Database(
-    entities = [GameEntity::class],
-    version = 4,
+    entities = [GameEntity::class, GameReviewEntity::class],
+    version = 5,
     exportSchema = false
 )
 abstract class JangGiDatabase : RoomDatabase() {
     abstract fun gameDao(): GameDao
+    abstract fun gameReviewDao(): GameReviewDao
 
     companion object {
         /**
@@ -52,6 +55,32 @@ abstract class JangGiDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE saved_games ADD COLUMN hanPlayerName TEXT")
                 db.execSQL("ALTER TABLE saved_games ADD COLUMN choRank TEXT")
                 db.execSQL("ALTER TABLE saved_games ADD COLUMN hanRank TEXT")
+            }
+        }
+
+        /**
+         * Migration from version 4 to 5: Add the game_reviews table so AI 리뷰 결과가
+         * 기보 저장과 별개로, 리뷰를 돌릴 때마다 자동으로 저장됩니다.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `game_reviews` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `savedDate` INTEGER NOT NULL,
+                        `boardStateJson` TEXT NOT NULL,
+                        `currentPlayer` TEXT NOT NULL,
+                        `moveCount` INTEGER NOT NULL,
+                        `gameStatus` TEXT NOT NULL,
+                        `winner` TEXT,
+                        `moveHistoryJson` TEXT NOT NULL,
+                        `startBoardJson` TEXT,
+                        `reviewJson` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }

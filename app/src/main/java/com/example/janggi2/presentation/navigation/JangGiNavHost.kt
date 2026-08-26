@@ -36,6 +36,8 @@ fun JangGiNavHost(
             val loadGameId = savedStateHandle?.get<Long>("loadGameId")
             val loadGameName = savedStateHandle?.get<String>("loadGameName") ?: ""
             val loadForReplay = savedStateHandle?.get<Boolean>("loadForReplay") ?: false
+            val loadReviewId = savedStateHandle?.get<Long>("loadReviewId")
+            val loadReviewName = savedStateHandle?.get<String>("loadReviewName") ?: ""
             val importedGameState = savedStateHandle?.get<GameState>("importedGameState")
 
             LaunchedEffect(loadGameId) {
@@ -49,6 +51,14 @@ fun JangGiNavHost(
                     savedStateHandle?.remove<Long>("loadGameId")
                     savedStateHandle?.remove<String>("loadGameName")
                     savedStateHandle?.remove<Boolean>("loadForReplay")
+                }
+            }
+
+            LaunchedEffect(loadReviewId) {
+                if (loadReviewId != null) {
+                    viewModel.loadReviewForReplay(loadReviewId, loadReviewName)
+                    savedStateHandle?.remove<Long>("loadReviewId")
+                    savedStateHandle?.remove<String>("loadReviewName")
                 }
             }
 
@@ -110,6 +120,16 @@ fun JangGiNavHost(
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("loadForReplay", true)
+                    navController.popBackStack()
+                },
+                onReviewSelected = { reviewId, name ->
+                    // Load the saved review for replay and navigate back
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("loadReviewId", reviewId)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("loadReviewName", name)
                     navController.popBackStack()
                 },
                 onNavigateBack = {
