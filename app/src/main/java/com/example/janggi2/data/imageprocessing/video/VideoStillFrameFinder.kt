@@ -168,7 +168,21 @@ class VideoStillFrameFinder @Inject constructor(
 
             val sampleTimesMs = buildSampleTimes(durationMs)
             val readings = sampleTimesMs.map { timeMs -> readPositionAt(retriever, timeMs) }
-            val currents = readings.map { it?.first }
+
+            // 전체 수(분모)는 대국 내내 하나로 고정입니다. 가장 흔하게 읽힌 분모를
+            // "진짜 전체 수"로 잡고, 그와 다른 분모로 읽힌 값은 애초에 리플레이
+            // 카운터가 아니라 화면의 다른 텍스트를 잘못 짝지은 것으로 보고 버립니다 -
+            // 안 그러면 대국이 끝난 뒤 화면(결과 요약 등)에서 우연히 숫자 두 개가
+            // 찍혀 정규식에 걸리면, 실제 마지막 수보다 큰 값으로 오인해 존재하지도
+            // 않는 수순을 뒤에 억지로 끼워 맞추려 듭니다.
+            val expectedTotal = readings.mapNotNull { it?.second }
+                .groupingBy { it }
+                .eachCount()
+                .maxByOrNull { it.value }
+                ?.key
+            val currents = readings.map { reading ->
+                if (reading != null && reading.second == expectedTotal) reading.first else null
+            }
 
             val rawPlateaus = groupPlateaus(currents)
             val corrected = correctFirstMoveLabel(rawPlateaus)
@@ -180,7 +194,7 @@ class VideoStillFrameFinder @Inject constructor(
             // 뼈대(확정된 수순) - 시간순으로 정렬된 (수 번호, 시각) 쌍.
             val skeleton = pickRepresentativeIndices(plateaus)
                 .map { (value, sampleIdx) -> value to sampleTimesMs[sampleIdx] }
-            val filled = fillGaps(retriever, skeleton)
+            val filled = fillGaps(retriever, skeleton, expectedTotal)
             val representatives = filled.sortedBy { it.first }
 
             Log.d(
@@ -212,7 +226,8 @@ class VideoStillFrameFinder @Inject constructor(
      */
     private suspend fun fillGaps(
         retriever: MediaMetadataRetriever,
-        skeleton: List<Pair<Int, Long>>
+        skeleton: List<Pair<Int, Long>>,
+        expectedTotal: Int?
     ): List<Pair<Int, Long>> {
         if (skeleton.size < 2) return skeleton
         val result = mutableListOf(skeleton.first())
@@ -222,7 +237,9 @@ class VideoStillFrameFinder @Inject constructor(
             if (nextValue - prevValue > 1 && nextTime > prevTime &&
                 nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
             ) {
-                result.addAll(searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime))
+                result.addAll(
+                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime, expectedTotal)
+                )
             }
             result.add(skeleton[i])
         }
@@ -240,13 +257,17 @@ class VideoStillFrameFinder @Inject constructor(
         prevValue: Int,
         prevTime: Long,
         nextValue: Int,
-        nextTime: Long
+        nextTime: Long,
+        expectedTotal: Int?
     ): List<Pair<Int, Long>> {
         val targets = (prevValue + 1 until nextValue).toMutableSet()
         val found = mutableMapOf<Int, Long>()
         var t = prevTime + GAP_FILL_STEP_MS
         while (t < nextTime && targets.isNotEmpty()) {
-            val reading = readPositionAt(retriever, t)?.first
+            val rawReading = readPositionAt(retriever, t)
+            // 갭 채우기 중에도 코드 스캔과 같은 이유로 분모가 다른 값은 리플레이
+            // 카운터가 아닌 것으로 보고 버립니다.
+            val reading = rawReading?.takeIf { it.second == expectedTotal }?.first
             if (reading != null && reading in targets) {
                 found[reading] = t
                 targets.remove(reading)
