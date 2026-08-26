@@ -21,8 +21,10 @@ import com.example.janggi2.domain.usecase.GetHintUseCase
 import com.example.janggi2.domain.usecase.InitializeAiUseCase
 import com.example.janggi2.domain.usecase.LoadGameUseCase
 import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
+import com.example.janggi2.domain.usecase.LoadGameReviewUseCase
 import com.example.janggi2.domain.usecase.ReviewGameUseCase
 import com.example.janggi2.domain.usecase.ReviewProgress
+import com.example.janggi2.domain.usecase.SaveGameReviewUseCase
 import com.example.janggi2.domain.usecase.SaveGameUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -75,11 +77,13 @@ class GameViewModel @Inject constructor(
     private val saveGameUseCase: SaveGameUseCase,
     private val loadGameUseCase: LoadGameUseCase,
     private val loadGameForReplayUseCase: LoadGameForReplayUseCase,
+    private val loadGameReviewUseCase: LoadGameReviewUseCase,
     private val aiEngine: AiEngine,
     private val initializeAiUseCase: InitializeAiUseCase,
     private val getAiMoveUseCase: GetAiMoveUseCase,
     private val getHintUseCase: GetHintUseCase,
     private val reviewGameUseCase: ReviewGameUseCase,
+    private val saveGameReviewUseCase: SaveGameReviewUseCase,
     repetitionJudge: RepetitionJudge
 ) : ViewModel() {
     companion object {
@@ -879,6 +883,7 @@ class GameViewModel @Inject constructor(
                                 isReviewLoading = false,
                                 reviewProgress = null
                             )
+                            saveReview(gameState, progress.review)
                         }
                     }
                 }
@@ -900,6 +905,47 @@ class GameViewModel @Inject constructor(
         reviewJob?.cancel()
         reviewJob = null
         _uiState.value = _uiState.value.copy(isReviewLoading = false, reviewProgress = null)
+    }
+
+    /**
+     * 리뷰가 끝나면 사용자 조작 없이 바로 저장합니다. 기보를 따로 저장했는지와
+     * 무관하게, 리뷰를 돌릴 때마다 "AI리뷰" 목록에 하나씩 쌓입니다.
+     */
+    private fun saveReview(gameState: GameState, review: GameReview) {
+        viewModelScope.launch {
+            try {
+                val name = _uiState.value.currentGameName ?: "이름 없는 대국"
+                saveGameReviewUseCase(gameState, review, name)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error auto-saving AI review", e)
+            }
+        }
+    }
+
+    /**
+     * 저장된 AI 리뷰를 복기 모드로 불러옵니다.
+     * @param name 리뷰를 저장할 때 붙은 이름. 화면 상단에 그대로 보여줍니다.
+     */
+    fun loadReviewForReplay(reviewId: Long, name: String) {
+        viewModelScope.launch {
+            try {
+                val loaded = loadGameReviewUseCase(reviewId)
+                if (loaded != null) {
+                    reviewJob?.cancel()
+                    _uiState.value = GameUiState(
+                        gameState = loaded.gameState,
+                        selectedPiece = null,
+                        validMoves = emptyList(),
+                        showGameOverDialog = false,
+                        isLoading = false,
+                        gameReview = loaded.review,
+                        currentGameName = name
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading saved AI review", e)
+            }
+        }
     }
 
     private fun dismissReviewError() {

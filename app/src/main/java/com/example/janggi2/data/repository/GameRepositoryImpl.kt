@@ -1,10 +1,14 @@
 package com.example.janggi2.data.repository
 
 import com.example.janggi2.data.local.database.dao.GameDao
+import com.example.janggi2.data.local.database.dao.GameReviewDao
 import com.example.janggi2.data.mapper.GameMapper
+import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.repository.SavedGameInfo
+import com.example.janggi2.domain.repository.SavedReview
+import com.example.janggi2.domain.repository.SavedReviewInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -14,6 +18,7 @@ import javax.inject.Inject
  */
 class GameRepositoryImpl @Inject constructor(
     private val gameDao: GameDao,
+    private val gameReviewDao: GameReviewDao,
     private val gameMapper: GameMapper
 ) : GameRepository {
 
@@ -71,5 +76,32 @@ class GameRepositoryImpl @Inject constructor(
 
     override suspend fun deleteAllGames() {
         gameDao.deleteAllGames()
+    }
+
+    override suspend fun saveReview(gameState: GameState, review: GameReview, name: String): Long {
+        val entity = gameMapper.toReviewEntity(gameState, review, name)
+        return gameReviewDao.insertReview(entity)
+    }
+
+    override suspend fun loadReview(reviewId: Long): SavedReview? {
+        val entity = gameReviewDao.getReviewById(reviewId) ?: return null
+        return gameMapper.reviewFromEntity(entity)
+    }
+
+    override fun getAllReviews(): Flow<List<SavedReviewInfo>> {
+        return gameReviewDao.getAllReviews().map { entities ->
+            entities.map { entity ->
+                SavedReviewInfo(
+                    id = entity.id,
+                    name = entity.name,
+                    savedDate = entity.savedDate,
+                    moveCount = entity.moveCount
+                )
+            }
+        }
+    }
+
+    override suspend fun deleteReview(reviewId: Long) {
+        gameReviewDao.deleteReviewById(reviewId)
     }
 }

@@ -1,5 +1,6 @@
 package com.example.janggi2.domain.repository
 
+import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
 import kotlinx.coroutines.flow.Flow
 
@@ -59,6 +60,28 @@ interface GameRepository {
      * Deletes all saved games (except auto-save).
      */
     suspend fun deleteAllGames()
+
+    /**
+     * Saves an AI review, independent of whether the underlying game was itself saved.
+     * @return The ID of the saved review
+     */
+    suspend fun saveReview(gameState: GameState, review: GameReview, name: String): Long
+
+    /**
+     * Loads a saved review by ID, along with the game it was computed on.
+     * @return The saved review, or null if not found
+     */
+    suspend fun loadReview(reviewId: Long): SavedReview?
+
+    /**
+     * Gets all saved AI reviews as a Flow.
+     */
+    fun getAllReviews(): Flow<List<SavedReviewInfo>>
+
+    /**
+     * Deletes a saved review by ID.
+     */
+    suspend fun deleteReview(reviewId: Long)
 }
 
 /**
@@ -75,4 +98,20 @@ data class SavedGameInfo(
     val hanPlayerName: String? = null,
     val choRank: String? = null,
     val hanRank: String? = null
+)
+
+/**
+ * Information about a saved AI review for display in lists.
+ */
+data class SavedReviewInfo(
+    val id: Long,
+    val name: String,
+    val savedDate: Long,
+    val moveCount: Int
+)
+
+/** A saved AI review together with the game it was computed on. */
+data class SavedReview(
+    val gameState: GameState,
+    val review: GameReview
 )
