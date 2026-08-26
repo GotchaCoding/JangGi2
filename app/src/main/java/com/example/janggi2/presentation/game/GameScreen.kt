@@ -73,27 +73,34 @@ fun GameScreen(
     onNavigateToDebug: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val isReplay = uiState.gameState.isReplayMode
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
     ) { innerPadding ->
+        // 복기 모드에서는 판과 수 기록이 남은 세로 공간을 나눠 가지므로(weight)
+        // 화면을 스크롤하지 않아도 수 기록이 항상 보입니다. 평소 대국 화면은
+        // 버튼이 많아 짧은 화면에서 넘칠 수 있어 그대로 스크롤을 둡니다.
+        val scrollState = if (!isReplay) rememberScrollState() else null
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                // 판을 가로폭에 꽉 채우면 화면 대부분을 차지해, 그 아래 점수·컨트롤·
-                // 수 기록까지 한 화면에 다 들어가지 않는 기기가 많습니다. 전체를
-                // 스크롤되게 해서 수 기록이 공간 부족으로 아예 안 보이는 일이
-                // 없게 합니다.
-                .verticalScroll(rememberScrollState()),
+                .let { if (scrollState != null) it.verticalScroll(scrollState) else it },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 기보 이름. 저장된 적 없는 대국(새 대국·자동저장 복원)은 이름이 없습니다.
+            // 복기 모드는 판 아래 수 기록까지 한 화면에 보여야 해서 여백을 더 줄입니다.
             Text(
                 text = uiState.currentGameName ?: "이름 없는 대국",
-                style = MaterialTheme.typography.headlineSmall,
+                style = if (isReplay) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                 maxLines = 1,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp, start = 16.dp, end = 16.dp)
+                modifier = Modifier.padding(
+                    top = if (isReplay) 6.dp else 16.dp,
+                    bottom = if (isReplay) 2.dp else 8.dp,
+                    start = 16.dp,
+                    end = 16.dp
+                )
             )
 
             // 점수는 판에서 계산하므로 복기 중에도 그 시점 점수가 그대로 맞습니다.
@@ -132,21 +139,12 @@ fun GameScreen(
                 checkNotice = showCheckBanner,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
+                    .padding(vertical = if (isReplay) 2.dp else 8.dp)
             )
 
-            // Current player indicator or replay mode indicator
-            if (uiState.gameState.isReplayMode) {
-                Text(
-                    text = "복기 모드",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = if (isReplay) 2.dp else 8.dp)
             ) {
                 TurnIndicator(
                     currentPlayer = uiState.gameState.currentPlayer,
@@ -155,8 +153,15 @@ fun GameScreen(
                 )
                 // 불러오기·복기는 앉은 쪽과 무관하게 늘 한이 아래로 뜨므로, 실제와
                 // 다르면 직접 뒤집어 볼 수 있게 둡니다.
-                IconButton(onClick = { viewModel.onEvent(GameUiEvent.FlipBoard) }) {
-                    Icon(imageVector = Icons.Default.SwapVert, contentDescription = "판 뒤집기")
+                IconButton(
+                    onClick = { viewModel.onEvent(GameUiEvent.FlipBoard) },
+                    modifier = if (isReplay) Modifier.size(32.dp) else Modifier
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SwapVert,
+                        contentDescription = "판 뒤집기",
+                        modifier = if (isReplay) Modifier.size(18.dp) else Modifier
+                    )
                 }
             }
 
@@ -263,9 +268,15 @@ fun GameScreen(
                 onMoveClick = { index ->
                     viewModel.onEvent(GameUiEvent.JumpToMove(index))
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(280.dp)
+                modifier = if (isReplay) {
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                } else {
+                    Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)
+                }
             )
         }
     }
