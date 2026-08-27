@@ -6,6 +6,8 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -262,12 +264,16 @@ class VideoStillFrameFinder @Inject constructor(
     ): List<Pair<Int, Long>> {
         val targets = (prevValue + 1 until nextValue).toMutableSet()
         val found = mutableMapOf<Int, Long>()
+        val dumpTag = "gap_${prevValue}to${nextValue}"
         var t = prevTime + GAP_FILL_STEP_MS
         while (t < nextTime && targets.isNotEmpty()) {
-            val rawReading = readPositionAt(retriever, t)
+            val rawReading = readPositionAt(retriever, t, dumpTag)
             // 갭 채우기 중에도 코드 스캔과 같은 이유로 분모가 다른 값은 리플레이
             // 카운터가 아닌 것으로 보고 버립니다.
             val reading = rawReading?.takeIf { it.second == expectedTotal }?.first
+            // TEMP DEBUG: 목표값이 안 나올 때 이 구간에서 실제로 뭐가 읽혔는지 보려고
+            // 매 표본을 그대로 기록합니다. 확인 끝나면 지울 코드입니다.
+            Log.d(TAG, "  gap-fill sample t=${t}ms targets=$targets read=$reading raw=$rawReading")
             if (reading != null && reading in targets) {
                 found[reading] = t
                 targets.remove(reading)
@@ -292,14 +298,42 @@ class VideoStillFrameFinder @Inject constructor(
      * 작은 글자라 썸네일 해상도로는 못 읽으므로 원본 해상도가 필요합니다 - 그만큼
      * 표본 수가 많은 긴 영상에서는 느려질 수 있습니다.
      */
-    private suspend fun readPositionAt(retriever: MediaMetadataRetriever, timeMs: Long): Pair<Int, Int>? {
+    private suspend fun readPositionAt(
+        retriever: MediaMetadataRetriever,
+        timeMs: Long,
+        dumpTag: String? = null
+    ): Pair<Int, Int>? {
         val full = retriever.getFrameAtTime(timeMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
         val counterCrop = cropCounterRegion(full)
         full.recycle()
 
-        val position = replayPositionReader.readPosition(counterCrop)
+        // TEMP DEBUG: 갭 채우기 구간에서 실제로 OCR이 본 카운터 크롭 이미지를 눈으로
+        // 확인하려고 저장합니다. 확인 끝나면 지울 코드입니다.
+        if (dumpTag != null) dumpCounterCrop(dumpTag, timeMs, counterCrop)
+
+        val position = replayPositionReader.readPosition(counterCrop) { eroded ->
+            // TEMP DEBUG: 침식 처리 후 실제 OCR 입력 이미지를 눈으로 확인하려고
+            // 저장합니다. 확인 끝나면 지울 코드입니다.
+            if (dumpTag != null) dumpCounterCrop("${dumpTag}_eroded", timeMs, eroded)
+        }
+
         counterCrop.recycle()
         return position
+    }
+
+    /** TEMP DEBUG: 지울 코드. */
+    private fun dumpCounterCrop(dumpTag: String, timeMs: Long, bitmap: Bitmap) {
+        try {
+            val base = context.getExternalFilesDir(null) ?: return
+            val dir = File(base, "video_import_gapfill_debug")
+            dir.mkdirs()
+            val target = File(dir, "${dumpTag}_${timeMs}ms.png")
+            FileOutputStream(target).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "gap-fill debug dump failed: $dumpTag@$timeMs", e)
+        }
     }
 
     /** 화면 비율로 수 번호 표시 영역만 잘라냅니다. */
