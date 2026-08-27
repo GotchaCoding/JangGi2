@@ -7,6 +7,7 @@ import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.MoveQuality
+import com.example.janggi2.domain.model.MoveQualityClassifier
 import com.example.janggi2.domain.model.MoveReview
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -32,11 +33,6 @@ class ReviewGameUseCase @Inject constructor(
     companion object {
         const val REVIEW_THINK_TIME_MS = 400
         private const val REVIEW_SKILL_LEVEL = 20
-
-        private const val BEST_MAX_LOSS_CP = 10
-        private const val GOOD_MAX_LOSS_CP = 50
-        private const val INACCURACY_MAX_LOSS_CP = 100
-        private const val MISTAKE_MAX_LOSS_CP = 300
     }
 
     fun review(gameState: GameState, thinkTimeMs: Int = REVIEW_THINK_TIME_MS): Flow<ReviewProgress> = flow {
@@ -75,7 +71,7 @@ class ReviewGameUseCase @Inject constructor(
                 }
                 else -> {
                     lossCp = (evalBefore.scoreCp + evalAfter.scoreCp).coerceAtLeast(0)
-                    quality = classify(lossCp, move, evalBefore.bestMove)
+                    quality = MoveQualityClassifier.classify(lossCp, move, evalBefore.bestMove)
                 }
             }
 
@@ -90,16 +86,5 @@ class ReviewGameUseCase @Inject constructor(
         }
 
         emit(ReviewProgress.Finished(GameReview(moveReviews)))
-    }
-
-    private fun classify(lossCp: Int, played: Move, engineBest: Move?): MoveQuality {
-        val matchesBest = engineBest != null && engineBest.from == played.from && engineBest.to == played.to
-        return when {
-            matchesBest || lossCp <= BEST_MAX_LOSS_CP -> MoveQuality.BEST
-            lossCp <= GOOD_MAX_LOSS_CP -> MoveQuality.GOOD
-            lossCp <= INACCURACY_MAX_LOSS_CP -> MoveQuality.INACCURACY
-            lossCp <= MISTAKE_MAX_LOSS_CP -> MoveQuality.MISTAKE
-            else -> MoveQuality.BLUNDER
-        }
     }
 }

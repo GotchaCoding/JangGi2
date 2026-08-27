@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -36,6 +37,8 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import com.example.janggi2.domain.model.GameReview
+import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.GameStatus
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.MoveQuality
@@ -70,7 +73,8 @@ fun GameScreen(
     onNavigateToSavedGames: () -> Unit = {},
     onNavigateToImport: () -> Unit = {},
     onNavigateToVideoImport: () -> Unit = {},
-    onNavigateToDebug: () -> Unit = {}
+    onNavigateToDebug: () -> Unit = {},
+    onNavigateToPuzzle: (GameState, GameReview, Player) -> Unit = { _, _, _ -> }
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
@@ -243,6 +247,15 @@ fun GameScreen(
 
             uiState.gameReview?.let { review ->
                 ReviewSummaryRow(review = review)
+                if (review.moveReviews.any { it.quality == MoveQuality.BLUNDER }) {
+                    TextButton(
+                        onClick = {
+                            onNavigateToPuzzle(uiState.gameState, review, uiState.viewpoint)
+                        }
+                    ) {
+                        Text("블런더 퍼즐로 풀기")
+                    }
+                }
             }
 
             // 수 기록. 판 크기와 무관하게 늘 일정한 높이로 보이고, 그 안에서

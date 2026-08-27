@@ -9,4 +9,5 @@ sealed class Screen(val route: String) {
     data object Import : Screen("import")
     data object VideoImport : Screen("video_import")
     data object LineDetectionDebug : Screen("line_detection_debug")
+    data object Puzzle : Screen("puzzle")
 }

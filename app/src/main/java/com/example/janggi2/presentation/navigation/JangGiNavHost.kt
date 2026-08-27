@@ -12,6 +12,8 @@ import com.example.janggi2.presentation.debug.LineDetectionDebugScreen
 import com.example.janggi2.presentation.game.GameScreen
 import com.example.janggi2.presentation.game.GameViewModel
 import com.example.janggi2.presentation.importboard.ImportScreen
+import com.example.janggi2.presentation.puzzle.PuzzleScreen
+import com.example.janggi2.presentation.puzzle.PuzzleViewModel
 import com.example.janggi2.presentation.savedgames.SavedGamesScreen
 import com.example.janggi2.presentation.videoimport.VideoImportScreen
 
@@ -90,6 +92,12 @@ fun JangGiNavHost(
                 },
                 onNavigateToDebug = {
                     navController.navigate(Screen.LineDetectionDebug.route)
+                },
+                onNavigateToPuzzle = { gameState, review, viewpoint ->
+                    PuzzleStateHolder.pendingGameState = gameState
+                    PuzzleStateHolder.pendingGameReview = review
+                    PuzzleStateHolder.pendingViewpoint = viewpoint
+                    navController.navigate(Screen.Puzzle.route)
                 }
             )
         }
@@ -168,6 +176,27 @@ fun JangGiNavHost(
 
         composable(Screen.LineDetectionDebug.route) {
             LineDetectionDebugScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.Puzzle.route) { backStackEntry ->
+            val viewModel: PuzzleViewModel = hiltViewModel()
+
+            LaunchedEffect(backStackEntry) {
+                val gameState = PuzzleStateHolder.pendingGameState
+                val review = PuzzleStateHolder.pendingGameReview
+                if (gameState != null && review != null) {
+                    viewModel.loadPuzzles(gameState, review, PuzzleStateHolder.pendingViewpoint)
+                    PuzzleStateHolder.pendingGameState = null
+                    PuzzleStateHolder.pendingGameReview = null
+                }
+            }
+
+            PuzzleScreen(
+                viewModel = viewModel,
                 onNavigateBack = {
                     navController.popBackStack()
                 }

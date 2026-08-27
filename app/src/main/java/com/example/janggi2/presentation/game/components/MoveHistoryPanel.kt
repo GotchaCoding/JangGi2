@@ -183,14 +183,14 @@ private fun MoveQualityBadge(quality: MoveQuality?) {
  * 좌표는 화면에 보이는 대로 세로줄 1-9, 가로줄 1-10 입니다. 두 자리 수가 섞이므로
  * 붙여 쓰지 않고 하이픈으로 나눕니다.
  */
-private fun describeMove(move: Move): String {
+internal fun describeMove(move: Move): String {
     if (move.isPass()) return "한 수 쉼"
     val name = move.movedPiece?.getDisplayChar() ?: ""
     val captured = move.capturedPiece?.let { " x${it.getDisplayChar()}" } ?: ""
     return "$name ${coordinate(move.from)}→${coordinate(move.to)}$captured"
 }
 
-private fun coordinate(position: Position): String = "${position.col + 1}-${position.row + 1}"
+internal fun coordinate(position: Position): String = "${position.col + 1}-${position.row + 1}"
 
 @Preview(showBackground = true)
 @Composable
