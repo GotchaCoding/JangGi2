@@ -80,11 +80,13 @@ fun GameScreen(
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
 
-    // 복기 중에는 시스템 뒤로가기(제스처 포함)가 앱을 나가는 대신 "복기 종료"와
-    // 같은 동작을 하도록 가로챕니다 - 안 그러면 보고 있던 수순이 사라지고 배경으로
-    // 밀려나 버립니다.
+    // 복기 중에는 시스템 뒤로가기(제스처 포함)가 앱을 나가는 대신 "여기서 계속"과
+    // 같은 동작을 하도록 가로챕니다. "복기 종료"(ExitReplayMode)는 늘 마지막 수순
+    // 으로 돌아가버려서, 보고 있던 수순이 아니라 엉뚱한(마지막) 국면이 열리는
+    // 것처럼 보였습니다 - ContinueFromReplay 는 지금 보고 있던 그 수순을 그대로
+    // 살아있는 대국 상태로 만듭니다.
     BackHandler(enabled = isReplay) {
-        viewModel.onEvent(GameUiEvent.ExitReplayMode)
+        viewModel.onEvent(GameUiEvent.ContinueFromReplay)
     }
 
     Scaffold(
