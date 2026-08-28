@@ -1,5 +1,6 @@
 package com.example.janggi2.presentation.game
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -78,6 +79,13 @@ fun GameScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
+
+    // 복기 중에는 시스템 뒤로가기(제스처 포함)가 앱을 나가는 대신 "복기 종료"와
+    // 같은 동작을 하도록 가로챕니다 - 안 그러면 보고 있던 수순이 사라지고 배경으로
+    // 밀려나 버립니다.
+    BackHandler(enabled = isReplay) {
+        viewModel.onEvent(GameUiEvent.ExitReplayMode)
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
