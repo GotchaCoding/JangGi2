@@ -82,15 +82,19 @@ fun GameScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize()
     ) { innerPadding ->
-        // 복기 모드에서는 판과 수 기록이 남은 세로 공간을 나눠 가지므로(weight)
-        // 화면을 스크롤하지 않아도 수 기록이 항상 보입니다. 평소 대국 화면은
-        // 버튼이 많아 짧은 화면에서 넘칠 수 있어 그대로 스크롤을 둡니다.
-        val scrollState = if (!isReplay) rememberScrollState() else null
+        // 화면 전체를 항상 스크롤 가능하게 둡니다. 복기 모드는 한때 수 기록에
+        // weight(1f)를 줘서 화면을 스크롤 없이 한 번에 보여줬지만, AI 리뷰 요약·
+        // 블런더 퍼즐 버튼이 그 자리를 나눠 가지면서 수 기록이 거의 0dp로
+        // 눌리는 경우가 생겼습니다(weight는 부모가 스크롤되지 않을 때만 쓸 수
+        // 있어서, 그때는 남는 공간이 없으면 정말 안 보이지도 스크롤도 안 됩니다).
+        // 수 기록은 항상 고정 높이 박스 안에서 자체적으로 스크롤되고, 그 박스
+        // 자체가 화면 밖으로 넘치면 이 바깥 스크롤로 끌어올려 봅니다.
+        val scrollState = rememberScrollState()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .let { if (scrollState != null) it.verticalScroll(scrollState) else it },
+                .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 기보 이름. 저장된 적 없는 대국(새 대국·자동저장 복원)은 이름이 없습니다.
@@ -258,8 +262,9 @@ fun GameScreen(
                 }
             }
 
-            // 수 기록. 판 크기와 무관하게 늘 일정한 높이로 보이고, 그 안에서
-            // 스크롤됩니다. 줄을 누르면 그 수를 둔 직후 국면으로 판이 바뀝니다.
+            // 수 기록. 판 크기와 무관하게 늘 일정한 높이의 리스트(LazyColumn)로
+            // 보이고, 그 안에서 드래그로 스크롤됩니다. 줄을 누르면 그 수를 둔
+            // 직후 국면으로 판이 바뀝니다.
             val moveQualities = remember(uiState.gameReview) {
                 val review = uiState.gameReview
                 if (review == null) {
@@ -281,15 +286,9 @@ fun GameScreen(
                 onMoveClick = { index ->
                     viewModel.onEvent(GameUiEvent.JumpToMove(index))
                 },
-                modifier = if (isReplay) {
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                } else {
-                    Modifier
-                        .fillMaxWidth()
-                        .height(280.dp)
-                }
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (isReplay) 360.dp else 280.dp)
             )
         }
     }
