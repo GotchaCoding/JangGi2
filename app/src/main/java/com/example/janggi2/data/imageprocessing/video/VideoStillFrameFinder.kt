@@ -52,6 +52,19 @@ class VideoStillFrameFinder @Inject constructor(
         private const val GAP_FILL_MAX_WINDOW_MS = 3000L
 
         /**
+         * 대표 프레임을 최종적으로 다시 가져올 때(아래 [fetchVerifiedFrame]) 검증에
+         * 실패하면 시도해볼 주변 시각 오프셋들입니다. 0을 먼저 시도하고, 실패하면
+         * 점점 더 먼 지점을 좌우로 번갈아 찾습니다.
+         */
+        private val VERIFY_OFFSETS_MS = listOf(0L, -2L, 2L, -4L, 4L, -6L, 6L, -8L, 8L, -10L, 10L)
+
+        /**
+         * 서로 다른 시각에서 몇 번이나 같은 값을 읽어야 그 프레임을 인정할지. 한 번만
+         * 요구하면 그 지점에서 일관되게 반복되는 오독(예: 6/9 헷갈림)을 못 거릅니다.
+         */
+        private const val REQUIRED_AGREEMENTS = 2
+
+        /**
          * 수 번호 표시 영역을 화면 비율로 자릅니다(기기·해상도가 달라도 비율은 비슷할
          * 것으로 가정). 실측 샘플 영상(1080x2340)에서 "14 / 49" 표시가 대략 이 안에
          * 들어오는 걸 확인하고, 여유를 두어 넓혔습니다.
@@ -196,8 +209,12 @@ class VideoStillFrameFinder @Inject constructor(
             // 뼈대(확정된 수순) - 시간순으로 정렬된 (수 번호, 시각) 쌍.
             val skeleton = pickRepresentativeIndices(plateaus)
                 .map { (value, sampleIdx) -> value to sampleTimesMs[sampleIdx] }
-            val filled = fillGaps(retriever, skeleton, expectedTotal)
-            val representatives = filled.sortedBy { it.first }
+            val filled = fillGaps(retriever, skeleton)
+            // 값 기준 정렬은 시간순이 이미 깨진 항목(아래 reconcileChronology가 다루는
+            // 경우)을 숨길 수 있어 위험하다고 위에서 경고했지만, gap-fill로 새로 채운
+            // 항목들은 원래 skeleton 순서에 섞여 있지 않아 값 기준 정렬이 필요합니다.
+            // 그래서 정렬 직후 reconcileChronology로 시간순 불변식을 다시 검증합니다.
+            val (representatives, reconciledPositions) = reconcileChronology(retriever, filled.sortedBy { it.first })
 
             Log.d(
                 TAG,
@@ -207,11 +224,7 @@ class VideoStillFrameFinder @Inject constructor(
             )
 
             representatives.mapNotNull { (position, timeMs) ->
-                val bitmap = retriever.getFrameAtTime(
-                    timeMs * 1000,
-                    MediaMetadataRetriever.OPTION_CLOSEST
-                ) ?: return@mapNotNull null
-                StillFrame(bitmap, position)
+                fetchVerifiedFrame(retriever, position, timeMs, trustDominantMisread = position in reconciledPositions)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read video", e)
@@ -228,8 +241,7 @@ class VideoStillFrameFinder @Inject constructor(
      */
     private suspend fun fillGaps(
         retriever: MediaMetadataRetriever,
-        skeleton: List<Pair<Int, Long>>,
-        expectedTotal: Int?
+        skeleton: List<Pair<Int, Long>>
     ): List<Pair<Int, Long>> {
         if (skeleton.size < 2) return skeleton
         val result = mutableListOf(skeleton.first())
@@ -240,7 +252,7 @@ class VideoStillFrameFinder @Inject constructor(
                 nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
             ) {
                 result.addAll(
-                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime, expectedTotal)
+                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime)
                 )
             }
             result.add(skeleton[i])
@@ -253,34 +265,132 @@ class VideoStillFrameFinder @Inject constructor(
      * [prevValue]와 [nextValue] 사이에 빠진 값들을 찾는 대로 (값, 처음 나타난 시각)
      * 으로 모읍니다. 값 하나당 여러 번 나타나도 첫 등장만 씁니다 - 나머지 대표
      * 프레임과 같은 정책입니다.
+     *
+     * **문자 그대로 못 찾아도 포기하지 않는 경우가 있습니다.** 실측에서 8과 10
+     * 사이(=9만 있을 수 있는 구간)를 2ms 간격으로 촘촘히 훑었는데, 그 구간 내내
+     * 화면은 분명 "9"인데 OCR은 매 표본 일관되게 "6"이라고 답했습니다(6과 9는
+     * 180도 뒤집힌 모양이라 이 폰트에서 서로 헷갈리기 쉬운 숫자 쌍으로 보입니다) -
+     * 같은 화면을 다시 훑어봤자 같은 오독이 반복될 뿐이라 문자 일치만으로는 영원히
+     * 못 찾습니다. 그런데 [prevValue]와 [nextValue] 사이에 남은 목표가 딱 하나뿐일
+     * 때는, 영상이 수순대로만 흘러간다는 사실 덕분에 이 구간에 나올 수 있는 값이
+     * 그 하나뿐이라는 걸 이미 압니다 - 그래서 그 목표를 문자로는 못 찾았어도, 이
+     * 구간을 과반 이상 지배하는 다른 값이 있으면(우연한 잡음이 아니라 이 구간
+     * 내내 일관된 오독이라는 뜻) 그 값을 목표에 대한 자릿수 오독으로 보고
+     * 받아들입니다.
      */
     private suspend fun searchGapForMissingValues(
         retriever: MediaMetadataRetriever,
         prevValue: Int,
         prevTime: Long,
         nextValue: Int,
-        nextTime: Long,
-        expectedTotal: Int?
+        nextTime: Long
     ): List<Pair<Int, Long>> {
         val targets = (prevValue + 1 until nextValue).toMutableSet()
         val found = mutableMapOf<Int, Long>()
+        val misreadCandidates = mutableListOf<Pair<Long, Int>>()
         val dumpTag = "gap_${prevValue}to${nextValue}"
         var t = prevTime + GAP_FILL_STEP_MS
         while (t < nextTime && targets.isNotEmpty()) {
             val rawReading = readPositionAt(retriever, t, dumpTag)
-            // 갭 채우기 중에도 코드 스캔과 같은 이유로 분모가 다른 값은 리플레이
-            // 카운터가 아닌 것으로 보고 버립니다.
-            val reading = rawReading?.takeIf { it.second == expectedTotal }?.first
+            // 전체 수(분모)는 대국 내내 하나로 고정이라, 이미 훨씬 많은 표본(전체
+            // 프레임)으로 다수결을 거쳐 확정해둔 expectedTotal이 이 짧은 갭 안에서
+            // 매번 새로 읽는 분모보다 훨씬 신뢰도가 높습니다. 그래서 여기서는 분모
+            // 값을 다시 비교하지 않고, 이미 좁혀둔 targets 안에 드는 현재 수(분자)만
+            // 확인합니다 - 분모 쪽 OCR 노이즈("149"->"49"/"65"/"67" 등)에 흔들리지
+            // 않기 위해서입니다.
+            val reading = rawReading?.first
             // TEMP DEBUG: 목표값이 안 나올 때 이 구간에서 실제로 뭐가 읽혔는지 보려고
             // 매 표본을 그대로 기록합니다. 확인 끝나면 지울 코드입니다.
             Log.d(TAG, "  gap-fill sample t=${t}ms targets=$targets read=$reading raw=$rawReading")
             if (reading != null && reading in targets) {
                 found[reading] = t
                 targets.remove(reading)
+            } else if (reading != null && reading != prevValue) {
+                misreadCandidates.add(t to reading)
             }
             t += GAP_FILL_STEP_MS
         }
+
+        if (targets.size == 1) {
+            val onlyTarget = targets.first()
+            val dominant = misreadCandidates.groupingBy { it.second }.eachCount().maxByOrNull { it.value }
+            if (dominant != null && dominant.value * 2 > misreadCandidates.size) {
+                val firstTime = misreadCandidates.first { it.second == dominant.key }.first
+                Log.w(
+                    TAG,
+                    "Position $onlyTarget: never read literally in (${prevTime}ms, ${nextTime}ms), but " +
+                        "${dominant.key} dominated ${dominant.value}/${misreadCandidates.size} sample(s) - " +
+                        "treating it as a digit misread of $onlyTarget at ${firstTime}ms"
+                )
+                found[onlyTarget] = firstTime
+            }
+        }
+
         return found.entries.sortedBy { it.value }.map { it.key to it.value }
+    }
+
+    /**
+     * [representatives]는 수 번호(값) 기준으로 정렬돼 있습니다 - 정상이라면 이 순서는
+     * 시각 순서와도 항상 일치해야 합니다(영상은 수순대로만 흘러가므로 수 번호가
+     * 커질수록 시각도 늦어져야 합니다).
+     *
+     * **실측 실패 사례**: 8수 확정 뒤 9수 항목이, 실제로는 훨씬 이전(6수가 진짜로
+     * 화면에 떠 있던) 시각을 가리키고 있었습니다 - 스캔 단계의 드문 오독 하나가
+     * 값 기준으로는 8과 10 사이에 들어맞아 보여서(LIS가 8→9→10로 이어지는 사슬로
+     * 착각) 뼈대에 그대로 끼어든 것으로 보입니다. 그 결과 "9수" 프레임을 다시
+     * 가져와도([fetchVerifiedFrame]) 애초에 잘못된 그 시각 근방만 반복해서 보게 되어,
+     * 화면에 진짜 떠 있는 "6"을 계속 확인하는 꼴이 됩니다 - 몇 번을 다시 읽어도
+     * 소용없는 이유입니다.
+     *
+     * 그래서 각 항목의 시각이 **직전에 이미 이 순서로 확정한** 항목의 시각보다 뒤인지만
+     * 확인합니다(다음 항목의 시각은 아직 검증 전이라 기준으로 못 씁니다 - 다음 항목
+     * 자체가 틀렸다면 멀쩡한 현재 항목까지 덩달아 틀렸다고 오판하게 됩니다). 벗어나
+     * 있으면 그 시각 자체를 못 믿는다는 뜻이므로 버리고, **그 수가 진짜로 존재할 수
+     * 있는 구간**(직전 확정 시각 ~ 다음 항목의 시각)만 다시 훑어서
+     * ([searchGapForMissingValues] 재사용) 올바른 시각으로 바꿔 끼웁니다 - 6수의
+     * 화면이 다시 뽑혀 나오는 것을 원천적으로 막습니다. 재검색으로도 못 찾으면 이
+     * 항목은 버립니다(틀린 시각을 쓰는 것보다 건너뛰는 쪽이 낫다는 기존 정책과 동일).
+     *
+     * @return 시간순으로 바로잡은 목록과, 그중 이렇게 재검색으로 **다시 끼워 넣은**
+     *   수 번호의 집합. 재검색으로 되찾은 시각은 이미 이웃 시각 사이(그 수가 존재할
+     *   수 있는 유일한 구간)를 촘촘히 훑어 확인한 것이라, 뒤이어 [fetchVerifiedFrame]이
+     *   문자 그대로 다시 일치하는지 재차 요구하면 같은 자릿수 오독에 또 걸려 버려질 수
+     *   있습니다 - 그 수 번호를 호출부에 알려줘서 그런 경우엔 더 관대하게 검증하도록
+     *   합니다.
+     */
+    private suspend fun reconcileChronology(
+        retriever: MediaMetadataRetriever,
+        representatives: List<Pair<Int, Long>>
+    ): Pair<List<Pair<Int, Long>>, Set<Int>> {
+        val result = mutableListOf<Pair<Int, Long>>()
+        val reconciled = mutableSetOf<Int>()
+        for (i in representatives.indices) {
+            val (value, time) = representatives[i]
+            val prevTime = result.lastOrNull()?.second ?: -1L
+            if (time > prevTime) {
+                result.add(value to time)
+                continue
+            }
+
+            val prevValue = result.lastOrNull()?.first ?: (value - 1)
+            val nextTime = representatives.getOrNull(i + 1)?.second?.takeIf { it > prevTime }
+                ?: (prevTime + GAP_FILL_MAX_WINDOW_MS)
+            val nextValue = representatives.getOrNull(i + 1)?.first?.takeIf { it > value } ?: (value + 1)
+            Log.w(
+                TAG,
+                "Position $value: timestamp ${time}ms is not after previous confirmed ${prevTime}ms, " +
+                    "re-searching (${prevTime}ms, ${nextTime}ms) for it"
+            )
+            val recovered = searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime)
+                .firstOrNull { it.first == value }
+            if (recovered != null) {
+                result.add(value to recovered.second)
+                reconciled.add(value)
+            } else {
+                Log.w(TAG, "Position $value: could not recover a chronologically valid frame, dropping")
+            }
+        }
+        return result to reconciled
     }
 
     private fun buildSampleTimes(durationMs: Long): List<Long> {
@@ -291,6 +401,123 @@ class VideoStillFrameFinder @Inject constructor(
             SCAN_INTERVAL_MS
         }
         return (0..durationMs step step).toList()
+    }
+
+    /**
+     * [timeMs]로 원본 해상도 프레임을 다시 가져와 [position]에 대응하는 [StillFrame]을
+     * 만듭니다. 카운터를 스캔할 때 이미 이 [timeMs]에서 [position]을 읽어냈지만, 그때
+     * 본 프레임은 이미 recycle 돼서 재사용할 수 없어 여기서 같은 시각으로 다시
+     * seek합니다.
+     *
+     * **단발성 검증으로는 못 잡는 실패가 있었습니다.** 처음엔 재조회한 프레임의 카운터를
+     * 한 번 더 읽어 [position]과 같은지만 확인했는데, 실측에서 "9수"라고 확정된
+     * 시각을 다시 seek하면 화면은 분명 "6"인데 그 크롭을 다시 읽어도 OCR이 또 "9"라고
+     * 답하는 사례가 나왔습니다(6과 9는 180도 뒤집힌 모양이라 이 폰트에서 서로 헷갈리기
+     * 쉬운 숫자 쌍으로 보입니다) - 즉 검증에 쓰는 OCR 자체가 그 지점에서 일관되게
+     * 틀리면, 같은 OCR로 한 번 더 확인해봤자 걸러지지 않습니다. 그래서 서로 **다른
+     * 시각**(=디코더가 실제로 다시 디코딩하는 별개의 프레임)에서 [REQUIRED_AGREEMENTS]번
+     * 독립적으로 같은 값을 읽어야만 인정합니다 - 진짜 그 수라면 여러 시점에서 안정적으로
+     * 같은 값이 나오지만, 이번처럼 한 지점에서만 나는 오독은 다른 시각에서까지 우연히
+     * 똑같이 반복될 가능성이 훨씬 낮습니다. [VERIFY_OFFSETS_MS]를 순서대로 시도하고,
+     * 끝내 합의에 못 이르면 이 프레임은 포기합니다(그 수는 없는 것으로 처리되고, 호출부가
+     * 이미 앞뒤 체크포인트로 건너뛰는 정책을 갖고 있어 안전합니다) - 틀린 내용을 쓰는
+     * 것보다 건너뛰는 쪽이 낫습니다.
+     *
+     * 최종적으로 반환하는 비트맵은 `ARGB_8888`로 명시해 복사한 독립된 CPU 픽셀
+     * 버퍼입니다 - 원본(`Config.HARDWARE`일 수 있음)은 바로 recycle하고, 이후 이
+     * retriever로 어떤 호출을 더 하든 반환한 비트맵은 영향받지 않습니다.
+     *
+     * **문자 그대로 일치하지 않는 값을 신뢰해도 되는 건 [trustDominantMisread]가
+     * 켜져 있을 때뿐입니다.** 평범한 위치(뼈대에서 곧바로, 시간순도 멀쩡하게 나온
+     * 경우)는 이 근방에 다른 값이 나타날 수도 있으므로 [position]과 문자 그대로
+     * 일치하는 표본을 [REQUIRED_AGREEMENTS]번 이상 요구합니다 - 못 채우면 그냥
+     * 버립니다(틀린 내용을 쓰는 것보다 건너뛰는 쪽이 낫습니다).
+     *
+     * 반면 [trustDominantMisread]가 켜져 있다면(호출부가 [reconcileChronology]에서
+     * "이 수가 존재할 수 있는 유일한 시간대"임을 이미 넓은 구간에 걸쳐 검증해뒀다는
+     * 뜻), 문자 일치를 다시 요구하면 오히려 해롭습니다 - 실측에서 8과 10 사이(=9만
+     * 있을 수 있는 구간)를 재검증하는 이 지점이 화면은 분명 "9"인데 OCR은 몇 번을
+     * 다시 봐도 "6"이라고 일관되게 답한 사례가 나왔습니다(6과 9는 180도 뒤집힌
+     * 모양이라 이 폰트에서 서로 헷갈리기 쉬운 숫자 쌍으로 보입니다) - 문자 일치를
+     * 계속 요구하면 검증이 영원히 실패합니다. 그래서 이때는 오프셋들을 전부 훑어
+     * **가장 많이 나온 값**(문자 그대로 [position]이 아니어도)을 [REQUIRED_AGREEMENTS]번
+     * 이상 & 과반 조건으로 신뢰합니다.
+     */
+    private suspend fun fetchVerifiedFrame(
+        retriever: MediaMetadataRetriever,
+        position: Int,
+        timeMs: Long,
+        trustDominantMisread: Boolean
+    ): StillFrame? {
+        val readings = VERIFY_OFFSETS_MS.mapNotNull { offset ->
+            val t = timeMs + offset
+            if (t < 0) return@mapNotNull null
+            val bitmap = retriever.getFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: return@mapNotNull null
+            val reading = readCounterFrom(bitmap)?.first
+            bitmap.recycle()
+            t to reading
+        }
+
+        val literalTimes = readings.filter { it.second == position }.map { it.first }
+        val acceptedTime = if (literalTimes.size >= REQUIRED_AGREEMENTS) {
+            literalTimes.first()
+        } else if (trustDominantMisread) {
+            val nonNull = readings.mapNotNull { it.second }
+            val dominant = nonNull.groupingBy { it }.eachCount().maxByOrNull { it.value }
+            if (dominant != null && dominant.value >= REQUIRED_AGREEMENTS && dominant.value * 2 > nonNull.size) {
+                Log.w(
+                    TAG,
+                    "Position $position: literal match never reached $REQUIRED_AGREEMENTS near ${timeMs}ms, " +
+                        "but dominant reading ${dominant.key} (${dominant.value}/${nonNull.size}) did - " +
+                        "trusting the timeline slot and treating it as a digit misread"
+                )
+                readings.first { it.second == dominant.key }.first
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+
+        if (acceptedTime == null) {
+            Log.w(
+                TAG,
+                "Position $position: only ${literalTimes.size}/$REQUIRED_AGREEMENTS agreeing sample(s) " +
+                    "near ${timeMs}ms, dropping"
+            )
+            return null
+        }
+
+        val bitmap = retriever.getFrameAtTime(acceptedTime * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+            ?: return null
+        val independent = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        // TEMP DEBUG: 검증을 통과한 바로 그 순간의 전체 프레임을 그대로 저장해서,
+        // 나중에 ImportBoardFromVideoUseCase가 저장하는 것과 픽셀 단위로 같은지
+        // 비교합니다. 원인 확인 끝나면 지울 코드입니다.
+        dumpVerifiedFrame(position, independent)
+        bitmap.recycle()
+        return StillFrame(independent, position)
+    }
+
+    /** TEMP DEBUG: 지울 코드. */
+    private fun dumpVerifiedFrame(position: Int, bitmap: Bitmap) {
+        try {
+            val base = context.getExternalFilesDir(null) ?: return
+            val dir = File(base, "video_import_verify_debug")
+            dir.mkdirs()
+            val target = File(dir, "%03d_verified.png".format(position))
+            FileOutputStream(target).use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
+        } catch (e: Exception) {
+            Log.w(TAG, "verify debug dump failed: $position", e)
+        }
+    }
+
+    private suspend fun readCounterFrom(bitmap: Bitmap): Pair<Int, Int>? {
+        val counterCrop = cropCounterRegion(bitmap)
+        val reading = replayPositionReader.readPosition(counterCrop)
+        counterCrop.recycle()
+        return reading
     }
 
     /**
