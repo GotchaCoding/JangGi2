@@ -82,6 +82,13 @@ sealed class VideoImportProgress {
  *
  * 사진 불러오기와 같은 방침입니다 - 인식이 안 되는 구간은 건너뛰고 되는 데까지만
  * 넣습니다. 별도 수동 보정 화면은 없습니다.
+ *
+ * **마지막 수**: 인식된 것 중 가장 큰 수 번호(`lastPosition`)는 위 루프 범위(1부터
+ * `lastPosition - 1`까지)에 안 들어갑니다 - 그 수 자체를 확정할 다음 수 체크포인트가
+ * 영상에 없기 때문입니다. 그래서 루프가 끝난 뒤 따로, 영상이 완전히 끝난 시점의
+ * 진짜 마지막 프레임([VideoStillFrameFinder.findFinalFrame])을 체크포인트 삼아 이
+ * 한 수만 추가로 재구성합니다 - 그 시점엔 더 이상 수가 없으므로 방금 둔 쪽 자신의
+ * 위치를 읽어도 안전합니다(다른 수들과 달리 상대 진영을 볼 필요가 없습니다).
  */
 class ImportBoardFromVideoUseCase @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -186,7 +193,8 @@ class ImportBoardFromVideoUseCase @Inject constructor(
         var state = GameState(board = startBoard, currentPlayer = Player.CHO, startBoard = startBoard)
         var recovered = 0
         var skipped = 0
-        val maxAttempt = recognized.maxOf { it.position } - 1
+        val lastPosition = recognized.maxOf { it.position }
+        val maxAttempt = lastPosition - 1
 
         for (position in 1..maxAttempt) {
             val mover = if (position % 2 == 1) Player.CHO else Player.HAN
@@ -230,7 +238,54 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                 Log.d(TAG, "Position $position: no clean move against checkpoint ${checkpoint.position}, skipped")
             }
         }
-        Log.d(TAG, "Recovered $recovered move(s) up to position $maxAttempt ($skipped position(s) unmatched)")
+        // 마지막 수([lastPosition])는 위 루프가 다루지 않습니다 - 다음 수 체크포인트가
+        // 없어서, 그 수를 둔 쪽 자신의 위치가 안정됐는지 확인해줄 프레임이 원래
+        // 없습니다. 그래서 카운터가 [lastPosition]으로 막 바뀐 그 프레임(아직 착수
+        // 애니메이션 중일 수 있음) 대신, 영상이 완전히 끝난 뒤의 진짜 마지막
+        // 프레임([VideoStillFrameFinder.findFinalFrame])을 체크포인트로 씁니다 - 그
+        // 시점엔 더 이상 아무 수도 없으므로 안정 여부를 몰라도 안전합니다.
+        if (lastPosition > 0) {
+            val finalMover = if (lastPosition % 2 == 1) Player.CHO else Player.HAN
+            val finalFrameBitmap = stillFrameFinder.findFinalFrame(videoUri)
+            val finalBoard = finalFrameBitmap?.let { bitmap ->
+                dumpDebugFrame(lastPosition, bitmap)
+                val board = withContext(Dispatchers.Default) {
+                    recognitionService.extractFromBitmap(bitmap).getOrNull()?.let { toImportedBoardState(it) }
+                }?.toGameState()?.board
+                bitmap.recycle()
+                board
+            }
+
+            if (finalBoard == null) {
+                skipped++
+                Log.d(TAG, "Position $lastPosition (final): could not read/recognize video's final frame, skipped")
+            } else {
+                val confirmedSide = state.board.filterValues { it.player == finalMover }
+                val finalSide = finalBoard.filterValues { it.player == finalMover }
+                if (confirmedSide == finalSide) {
+                    val pass = passMoveFor(state, lastPosition)
+                    if (pass != null) {
+                        state = applyFoundMove(state, pass)
+                        recovered++
+                        logMove(lastPosition, pass, isPass = true)
+                    } else {
+                        skipped++
+                    }
+                } else {
+                    val move = findLegalMove(state.board, confirmedSide, finalSide, finalMover)
+                    if (move != null) {
+                        state = applyFoundMove(state, move)
+                        recovered++
+                        logMove(lastPosition, move, isPass = false)
+                    } else {
+                        skipped++
+                        Log.d(TAG, "Position $lastPosition (final): no clean move against final frame, skipped")
+                    }
+                }
+            }
+        }
+
+        Log.d(TAG, "Recovered $recovered move(s) up to position $lastPosition ($skipped position(s) unmatched)")
 
         emit(VideoImportProgress.Finished(state, recovered, viewpoint, recognized.size))
     }

@@ -167,6 +167,48 @@ class VideoStillFrameFinder @Inject constructor(
     data class StillFrame(val bitmap: Bitmap, val position: Int)
 
     /**
+     * 영상의 진짜 마지막 프레임을 수 번호 OCR과 무관하게 그대로 가져옵니다.
+     *
+     * **마지막 수는 [findStillFrames]가 주는 프레임만으로는 안전하게 재구성할 수
+     * 없습니다.** 이 클래스 전체의 원칙은 "방금 둔 쪽 자신의 위치는 안 믿고, 항상
+     * 다음 수 프레임에서 그때는 안 움직인 상대 진영만 믿는다"인데, 마지막 수는
+     * 그 "다음 수"가 아예 없어서 상대 진영을 비춰줄 체크포인트가 없습니다. 카운터가
+     * 막 마지막 번호로 바뀐 그 프레임을 그대로 쓰면, 방금 둔 기물이 아직 착수
+     * 애니메이션 중일 수 있어 다른 수들과 달리 이 원칙이 깨집니다. 영상 끝(더 이상
+     * 아무 일도 안 일어나는 시점)은 그 반대로 "미래에서 본 안정된 모습"을 보장하므로,
+     * 마지막 수의 체크포인트로 안전하게 쓸 수 있습니다.
+     *
+     * @return 원본 해상도의 `ARGB_8888` 비트맵. 실패하면 null.
+     */
+    suspend fun findFinalFrame(videoUri: Uri): Bitmap? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, videoUri)
+            val durationMs = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+            if (durationMs == null || durationMs <= 0) {
+                Log.w(TAG, "Could not read video duration for final frame")
+                return@withContext null
+            }
+            // durationMs 그 자체로 seek하면 마지막 프레임을 넘어가 아무것도 못 가져오는
+            // 기기가 있어, 살짝 앞에서 잡습니다.
+            val targetMs = (durationMs - 1).coerceAtLeast(0)
+            val raw = retriever.getFrameAtTime(targetMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: return@withContext null
+            // readPositionAt과 같은 이유로 소프트웨어 비트맵으로 확정합니다.
+            val software = raw.copy(Bitmap.Config.ARGB_8888, false)
+            raw.recycle()
+            software
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read final frame", e)
+            null
+        } finally {
+            retriever.release()
+        }
+    }
+
+    /**
      * @return 수 번호마다 하나씩, 오름차순으로 정렬된 원본 해상도 프레임. 실패하면 빈 목록.
      */
     suspend fun findStillFrames(videoUri: Uri): List<StillFrame> = withContext(Dispatchers.IO) {
