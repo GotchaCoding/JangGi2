@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,10 +18,10 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -91,7 +92,12 @@ fun VideoImportScreen(
         ) {
             when {
                 uiState.isProcessing -> {
-                    ProcessingView(progress = uiState.progress)
+                    ProcessingView(
+                        stepLabel = uiState.stepLabel,
+                        completed = uiState.stepCompleted,
+                        total = uiState.stepTotal,
+                        etaSeconds = uiState.etaSeconds
+                    )
                 }
                 uiState.error != null -> {
                     ErrorView(
@@ -196,43 +202,68 @@ private fun SelectVideoView(
 }
 
 /**
- * 처리 중 상태 - 정지 프레임 분석 진행률을 보여줍니다.
+ * 처리 중 상태 - 지금 어느 세부 단계(영상 훑기/빈 구간 재확인/체크포인트 검증/기물
+ * 인식)를 돌고 있는지, 그 단계의 진행률을 원형 게이지로, 예상 완료 시간을 글로
+ * 보여줍니다.
  */
 @Composable
 private fun ProcessingView(
-    progress: Pair<Int, Int>?
+    stepLabel: String?,
+    completed: Int,
+    total: Int,
+    etaSeconds: Long?
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth()
     ) {
-        val (completed, total) = progress ?: (0 to 1)
-        val fraction = if (total > 0) completed.toFloat() / total else 0f
+        val fraction = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else 0f
 
-        LinearProgressIndicator(
-            progress = { fraction },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp)
-        )
+        Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.size(140.dp),
+                strokeWidth = 10.dp
+            )
+            Text(
+                text = "${(fraction * 100).toInt()}%",
+                style = MaterialTheme.typography.headlineSmall
+            )
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = if (progress != null) "$completed / $total 프레임 분석 중..." else "동영상을 훑는 중...",
+            text = stepLabel ?: "준비 중...",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center
         )
 
+        if (total > 0) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "$completed / $total",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "잠시만 기다려 주세요...",
+            text = etaSeconds?.let { "완료까지 약 ${formatEtaSeconds(it)}" } ?: "잠시만 기다려 주세요...",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
     }
+}
+
+/** 초 단위 예상 남은 시간을 "1분 30초" / "45초" 같은 문구로 바꿉니다. */
+private fun formatEtaSeconds(seconds: Long): String {
+    val minutes = seconds / 60
+    val remainingSeconds = seconds % 60
+    return if (minutes > 0) "${minutes}분 ${remainingSeconds}초" else "${remainingSeconds}초"
 }
 
 /**

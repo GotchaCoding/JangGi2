@@ -20,12 +20,18 @@ import java.io.FileOutputStream
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 
 /** [ImportBoardFromVideoUseCase.import] 의 진행 상황. */
 sealed class VideoImportProgress {
-    data class Analyzing(val completed: Int, val total: Int) : VideoImportProgress()
+    /**
+     * 지금 파이프라인이 돌고 있는 세부 단계 하나 - 영상 훑기/빈 구간 재확인/체크포인트
+     * 검증/기물 인식까지 전 과정에 걸쳐 공통으로 씁니다. UI가 [label]을 그대로
+     * 보여주고, [completed]/[total]로 게이지와 예상 완료 시간을 계산합니다.
+     */
+    data class Step(val label: String, val completed: Int, val total: Int) : VideoImportProgress()
 
     /**
      * @param viewpoint 영상 속에서 실제로 아래쪽에 있던 진영 - 사진 불러오기와 같은 이유로
@@ -142,7 +148,17 @@ class ImportBoardFromVideoUseCase @Inject constructor(
             File(base, DEBUG_DUMP_DIR_NAME).deleteRecursively()
         }
 
-        val frames = stillFrameFinder.findStillFrames(videoUri)
+        // stillFrameFinder.findStillFrames는 그 자체가 진행 상황을 내보내는 흐름입니다 -
+        // 안에서 겪는 세부 단계(훑기/빈 구간 재확인/체크포인트 검증)를 그대로 이
+        // 흐름의 Step으로 옮겨 내보내고, 마지막에 온 결과만 따로 챙깁니다.
+        var frames: List<VideoStillFrameFinder.StillFrame> = emptyList()
+        stillFrameFinder.findStillFrames(videoUri).collect { event ->
+            when (event) {
+                is VideoStillFrameFinder.ScanEvent.Progress ->
+                    emit(VideoImportProgress.Step(event.phase.label, event.completed, event.total))
+                is VideoStillFrameFinder.ScanEvent.Done -> frames = event.frames
+            }
+        }
         Log.d(TAG, "Found ${frames.size} still frame candidates")
         if (frames.size < 2) {
             emit(VideoImportProgress.Failed("정지 구간을 찾지 못했습니다. 다른 영상으로 시도해 주세요."))
@@ -168,7 +184,7 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                 recognized.add(RecognizedFrame(frame.position, importedState.toGameState().board))
             }
             frame.bitmap.recycle()
-            emit(VideoImportProgress.Analyzing(index + 1, frames.size))
+            emit(VideoImportProgress.Step("기물 인식 중", index + 1, frames.size))
         }
 
         if (recognized.size < 2) {

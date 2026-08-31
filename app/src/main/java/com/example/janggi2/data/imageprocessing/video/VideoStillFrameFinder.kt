@@ -11,6 +11,9 @@ import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
 /**
@@ -53,10 +56,19 @@ class VideoStillFrameFinder @Inject constructor(
 
         /**
          * 대표 프레임을 최종적으로 다시 가져올 때(아래 [fetchVerifiedFrame]) 검증에
-         * 실패하면 시도해볼 주변 시각 오프셋들입니다. 0을 먼저 시도하고, 실패하면
-         * 점점 더 먼 지점을 좌우로 번갈아 찾습니다.
+         * 쓸 주변 시각 오프셋들입니다. 0부터 좌우로 번갈아 [VERIFY_OFFSET_RANGE_MS]까지
+         * 넓힙니다.
+         *
+         * **±10ms로는 부족한 사례가 있었습니다.** 실측에서, 상대 진영 기물이 착수하는
+         * 애니메이션(예: 이동한 자리를 잠깐 겹쳐 보여주는 효과)이 그 수 번호가 화면에
+         * 뜨고 나서도 한동안(10ms보다 오래) 이어져, "처음 나타난 시점"에 가장 가까운
+         * 합의 후보를 찾아도 여전히 애니메이션에 걸리는 경우가 있었습니다. 범위를
+         * 넓혀 더 이른 시각까지 훑으면, 그 애니메이션이 끝나기 전(=수 번호가 막
+         * 바뀐 진짜 첫 순간)에 더 가까운 표본을 찾을 확률이 올라갑니다.
          */
-        private val VERIFY_OFFSETS_MS = listOf(0L, -2L, 2L, -4L, 4L, -6L, 6L, -8L, 8L, -10L, 10L)
+        private const val VERIFY_OFFSET_RANGE_MS = 50L
+        private val VERIFY_OFFSETS_MS = (0..VERIFY_OFFSET_RANGE_MS step GAP_FILL_STEP_MS)
+            .flatMap { d -> if (d == 0L) listOf(0L) else listOf(-d, d) }
 
         /**
          * 서로 다른 시각에서 몇 번이나 같은 값을 읽어야 그 프레임을 인정할지. 한 번만
@@ -166,6 +178,19 @@ class VideoStillFrameFinder @Inject constructor(
     /** 정지 프레임 하나 - OCR로 읽은(그리고 필요시 보정한) 실제 수 번호가 붙어 있습니다. */
     data class StillFrame(val bitmap: Bitmap, val position: Int)
 
+    /** [findStillFrames]가 안에서 실제로 어느 단계를 돌고 있는지 - 진행 상황 UI용. */
+    enum class ScanPhase(val label: String) {
+        SCANNING("영상 훑는 중"),
+        GAP_FILLING("빈 구간 재확인 중"),
+        VERIFYING("체크포인트 검증 중")
+    }
+
+    /** [findStillFrames]가 내보내는 사건 - 중간 진행률과 최종 결과를 하나의 흐름으로 냅니다. */
+    sealed class ScanEvent {
+        data class Progress(val phase: ScanPhase, val completed: Int, val total: Int) : ScanEvent()
+        data class Done(val frames: List<StillFrame>) : ScanEvent()
+    }
+
     /**
      * 영상의 진짜 마지막 프레임을 수 번호 OCR과 무관하게 그대로 가져옵니다.
      *
@@ -209,9 +234,11 @@ class VideoStillFrameFinder @Inject constructor(
     }
 
     /**
-     * @return 수 번호마다 하나씩, 오름차순으로 정렬된 원본 해상도 프레임. 실패하면 빈 목록.
+     * @return 진행 상황([ScanEvent.Progress])을 거쳐 마지막에 결과([ScanEvent.Done])를
+     *   내보내는 흐름. 결과 프레임 목록은 수 번호마다 하나씩, 오름차순 정렬입니다.
+     *   실패하면 빈 목록으로 끝납니다.
      */
-    suspend fun findStillFrames(videoUri: Uri): List<StillFrame> = withContext(Dispatchers.IO) {
+    fun findStillFrames(videoUri: Uri): Flow<ScanEvent> = flow {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, videoUri)
@@ -220,11 +247,16 @@ class VideoStillFrameFinder @Inject constructor(
                 ?.toLongOrNull()
             if (durationMs == null || durationMs <= 0) {
                 Log.w(TAG, "Could not read video duration")
-                return@withContext emptyList()
+                emit(ScanEvent.Done(emptyList()))
+                return@flow
             }
 
             val sampleTimesMs = buildSampleTimes(durationMs)
-            val readings = sampleTimesMs.map { timeMs -> readPositionAt(retriever, timeMs) }
+            val readings = mutableListOf<Pair<Int, Int>?>()
+            for ((index, timeMs) in sampleTimesMs.withIndex()) {
+                readings.add(readPositionAt(retriever, timeMs))
+                emit(ScanEvent.Progress(ScanPhase.SCANNING, index + 1, sampleTimesMs.size))
+            }
 
             // 전체 수(분모)는 대국 내내 하나로 고정입니다. 가장 흔하게 읽힌 분모를
             // "진짜 전체 수"로 잡고, 그와 다른 분모로 읽힌 값은 애초에 리플레이
@@ -251,7 +283,9 @@ class VideoStillFrameFinder @Inject constructor(
             // 뼈대(확정된 수순) - 시간순으로 정렬된 (수 번호, 시각) 쌍.
             val skeleton = pickRepresentativeIndices(plateaus)
                 .map { (value, sampleIdx) -> value to sampleTimesMs[sampleIdx] }
-            val filled = fillGaps(retriever, skeleton)
+            val filled = fillGaps(retriever, skeleton) { completed, total ->
+                emit(ScanEvent.Progress(ScanPhase.GAP_FILLING, completed, total))
+            }
             // 값 기준 정렬은 시간순이 이미 깨진 항목(아래 reconcileChronology가 다루는
             // 경우)을 숨길 수 있어 위험하다고 위에서 경고했지만, gap-fill로 새로 채운
             // 항목들은 원래 skeleton 순서에 섞여 있지 않아 값 기준 정렬이 필요합니다.
@@ -265,16 +299,21 @@ class VideoStillFrameFinder @Inject constructor(
                     representatives.joinToString(", ") { (position, timeMs) -> "$position@${timeMs}ms" }
             )
 
-            representatives.mapNotNull { (position, timeMs) ->
+            val stillFrames = mutableListOf<StillFrame>()
+            for ((index, pair) in representatives.withIndex()) {
+                val (position, timeMs) = pair
                 fetchVerifiedFrame(retriever, position, timeMs, trustDominantMisread = position in reconciledPositions)
+                    ?.let { stillFrames.add(it) }
+                emit(ScanEvent.Progress(ScanPhase.VERIFYING, index + 1, representatives.size))
             }
+            emit(ScanEvent.Done(stillFrames))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read video", e)
-            emptyList()
+            emit(ScanEvent.Done(emptyList()))
         } finally {
             retriever.release()
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * 뼈대(확정된 수순) 사이에 빠진 수 번호가 있으면, 그 구간(양 끝 시각 사이)만 촘촘히
@@ -283,9 +322,27 @@ class VideoStillFrameFinder @Inject constructor(
      */
     private suspend fun fillGaps(
         retriever: MediaMetadataRetriever,
-        skeleton: List<Pair<Int, Long>>
+        skeleton: List<Pair<Int, Long>>,
+        onProgress: suspend (completed: Int, total: Int) -> Unit
     ): List<Pair<Int, Long>> {
         if (skeleton.size < 2) return skeleton
+
+        // 진행률 total은 "구간을 끝까지 다 훑는" 최악의 경우 기준입니다 - 목표를
+        // 일찍 다 찾아 일찍 끝나는 건 UI 입장에서 그냥 이 단계가 예상보다 빨리
+        // 끝나는 것뿐이라 문제 없습니다.
+        val total = (1 until skeleton.size).sumOf { i ->
+            val (prevValue, prevTime) = skeleton[i - 1]
+            val (nextValue, nextTime) = skeleton[i]
+            if (nextValue - prevValue > 1 && nextTime > prevTime &&
+                nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
+            ) {
+                ((nextTime - prevTime) / GAP_FILL_STEP_MS).toInt()
+            } else {
+                0
+            }
+        }
+
+        var completed = 0
         val result = mutableListOf(skeleton.first())
         for (i in 1 until skeleton.size) {
             val (prevValue, prevTime) = skeleton[i - 1]
@@ -294,7 +351,10 @@ class VideoStillFrameFinder @Inject constructor(
                 nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
             ) {
                 result.addAll(
-                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime)
+                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime) {
+                        completed++
+                        onProgress(completed, total)
+                    }
                 )
             }
             result.add(skeleton[i])
@@ -325,7 +385,8 @@ class VideoStillFrameFinder @Inject constructor(
         prevValue: Int,
         prevTime: Long,
         nextValue: Int,
-        nextTime: Long
+        nextTime: Long,
+        onSample: suspend () -> Unit = {}
     ): List<Pair<Int, Long>> {
         val targets = (prevValue + 1 until nextValue).toMutableSet()
         val found = mutableMapOf<Int, Long>()
@@ -350,6 +411,7 @@ class VideoStillFrameFinder @Inject constructor(
             } else if (reading != null && reading != prevValue) {
                 misreadCandidates.add(t to reading)
             }
+            onSample()
             t += GAP_FILL_STEP_MS
         }
 
@@ -484,6 +546,17 @@ class VideoStillFrameFinder @Inject constructor(
      * 계속 요구하면 검증이 영원히 실패합니다. 그래서 이때는 오프셋들을 전부 훑어
      * **가장 많이 나온 값**(문자 그대로 [position]이 아니어도)을 [REQUIRED_AGREEMENTS]번
      * 이상 & 과반 조건으로 신뢰합니다.
+     *
+     * **합의된 후보 중에서는 항상 가장 이른 시각을 씁니다.** 이 클래스의 기본 원칙이
+     * "그 수가 처음 나타난 시점의 표본을 대표로 쓴다"인데, [VERIFY_OFFSETS_MS]는
+     * 0, -2, +2, -4, +4, ...처럼 **시간순이 아니라 오프셋 나열 순**입니다 - 예전엔
+     * 이 나열에서 처음 조건을 만족하는 후보를 그냥 썼는데, 그러면 더 이른 시각의
+     * 합의 후보를 제쳐두고 실제로는 더 늦은 시각이 뽑힐 수 있었습니다. 실측에서
+     * 이렇게 뽑힌, 실제보다 조금 늦은 시각의 프레임에 상대 진영 기물의 착수
+     * 애니메이션이 다른 기물과 겹쳐 찍혀([BoardRecognitionService] 인식을 방해하는
+     * 사례가 나왔습니다 - "처음 나타난 시점"에 최대한 가까울수록 그런 애니메이션이
+     * 아직 안 끼어들었을 가능성이 높으므로, 합의된 후보들 중 가장 이른 시각을
+     * 명시적으로 고릅니다.
      */
     private suspend fun fetchVerifiedFrame(
         retriever: MediaMetadataRetriever,
@@ -503,7 +576,7 @@ class VideoStillFrameFinder @Inject constructor(
 
         val literalTimes = readings.filter { it.second == position }.map { it.first }
         val acceptedTime = if (literalTimes.size >= REQUIRED_AGREEMENTS) {
-            literalTimes.first()
+            literalTimes.min()
         } else if (trustDominantMisread) {
             val nonNull = readings.mapNotNull { it.second }
             val dominant = nonNull.groupingBy { it }.eachCount().maxByOrNull { it.value }
@@ -514,7 +587,7 @@ class VideoStillFrameFinder @Inject constructor(
                         "but dominant reading ${dominant.key} (${dominant.value}/${nonNull.size}) did - " +
                         "trusting the timeline slot and treating it as a digit misread"
                 )
-                readings.first { it.second == dominant.key }.first
+                readings.filter { it.second == dominant.key }.minOf { it.first }
             } else {
                 null
             }
