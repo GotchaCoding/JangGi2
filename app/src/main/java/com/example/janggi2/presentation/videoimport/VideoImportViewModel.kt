@@ -9,9 +9,12 @@ import com.example.janggi2.domain.usecase.ImportBoardFromVideoUseCase
 import com.example.janggi2.domain.usecase.VideoImportProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -21,6 +24,9 @@ import kotlinx.coroutines.launch
  *   null이면 아직 아무 단계도 시작 안 한 상태입니다.
  * @param etaSeconds 지금 단계가 끝나기까지 예상 남은 시간(초). 이 단계에서 아직 속도를
  *   가늠할 만큼 진행이 안 됐으면 null입니다.
+ * @param elapsedSeconds 동영상을 고른 시점부터 지금까지 흐른 시간(초). 분석이 끝나거나
+ *   실패한 뒤에는 마지막으로 갱신된 값에서 멈춥니다 - 전체가 걸린 시간을 그대로
+ *   보여주기 위해서입니다.
  */
 data class VideoImportUiState(
     val selectedVideoUri: Uri? = null,
@@ -29,6 +35,7 @@ data class VideoImportUiState(
     val stepCompleted: Int = 0,
     val stepTotal: Int = 0,
     val etaSeconds: Long? = null,
+    val elapsedSeconds: Long = 0L,
     val movesRecovered: Int? = null,
     val importedGameState: GameState? = null,
     val importedViewpoint: Player = Player.HAN,
@@ -54,6 +61,7 @@ class VideoImportViewModel @Inject constructor(
     // ETA가 완전히 틀어집니다.
     private var currentStepLabel: String? = null
     private var stepStartMs: Long = 0L
+    private var elapsedTickerJob: Job? = null
 
     fun onVideoSelected(uri: Uri) {
         _uiState.value = VideoImportUiState(
@@ -61,6 +69,20 @@ class VideoImportViewModel @Inject constructor(
             isProcessing = true
         )
         currentStepLabel = null
+
+        val importStartMs = System.currentTimeMillis()
+        // 화면에 보이는 경과 시간은 진행률 이벤트(Step)가 들어올 때만 갱신하면 이벤트
+        // 사이 간격이 벌어질 때(예: 체크포인트 검증 한 번에 몇 초씩) 숫자가 멈춰
+        // 보입니다. 그래서 별도 타이머로 1초마다 독립적으로 갱신합니다.
+        elapsedTickerJob?.cancel()
+        elapsedTickerJob = viewModelScope.launch {
+            while (isActive) {
+                _uiState.value = _uiState.value.copy(
+                    elapsedSeconds = (System.currentTimeMillis() - importStartMs) / 1000
+                )
+                delay(1000)
+            }
+        }
 
         viewModelScope.launch {
             try {
@@ -107,11 +129,17 @@ class VideoImportViewModel @Inject constructor(
                     isProcessing = false,
                     error = "동영상 불러오기 실패: ${e.message}"
                 )
+            } finally {
+                elapsedTickerJob?.cancel()
+                _uiState.value = _uiState.value.copy(
+                    elapsedSeconds = (System.currentTimeMillis() - importStartMs) / 1000
+                )
             }
         }
     }
 
     fun retry() {
+        elapsedTickerJob?.cancel()
         _uiState.value = VideoImportUiState()
         currentStepLabel = null
     }

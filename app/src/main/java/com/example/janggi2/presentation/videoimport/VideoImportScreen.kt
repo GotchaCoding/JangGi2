@@ -96,12 +96,14 @@ fun VideoImportScreen(
                         stepLabel = uiState.stepLabel,
                         completed = uiState.stepCompleted,
                         total = uiState.stepTotal,
-                        etaSeconds = uiState.etaSeconds
+                        etaSeconds = uiState.etaSeconds,
+                        elapsedSeconds = uiState.elapsedSeconds
                     )
                 }
                 uiState.error != null -> {
                     ErrorView(
                         error = uiState.error!!,
+                        elapsedSeconds = uiState.elapsedSeconds,
                         onRetry = { videoPickerLauncher.launch("video/*") },
                         onDismiss = viewModel::clearError
                     )
@@ -203,20 +205,29 @@ private fun SelectVideoView(
 
 /**
  * 처리 중 상태 - 지금 어느 세부 단계(영상 훑기/빈 구간 재확인/체크포인트 검증/기물
- * 인식)를 돌고 있는지, 그 단계의 진행률을 원형 게이지로, 예상 완료 시간을 글로
- * 보여줍니다.
+ * 인식)를 돌고 있는지, 그 단계의 진행률을 원형 게이지로, 예상 완료 시간과 동영상을
+ * 고른 시점부터 지금까지 흐른 시간을 글로 보여줍니다.
  */
 @Composable
 private fun ProcessingView(
     stepLabel: String?,
     completed: Int,
     total: Int,
-    etaSeconds: Long?
+    etaSeconds: Long?,
+    elapsedSeconds: Long
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth()
     ) {
+        Text(
+            text = "경과 시간 ${formatDurationSeconds(elapsedSeconds)}",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         val fraction = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else 0f
 
         Box(contentAlignment = Alignment.Center) {
@@ -251,7 +262,7 @@ private fun ProcessingView(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = etaSeconds?.let { "완료까지 약 ${formatEtaSeconds(it)}" } ?: "잠시만 기다려 주세요...",
+            text = etaSeconds?.let { "완료까지 약 ${formatDurationSeconds(it)}" } ?: "잠시만 기다려 주세요...",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -259,19 +270,20 @@ private fun ProcessingView(
     }
 }
 
-/** 초 단위 예상 남은 시간을 "1분 30초" / "45초" 같은 문구로 바꿉니다. */
-private fun formatEtaSeconds(seconds: Long): String {
+/** 초 단위 시간을 "1분 30초" / "45초" 같은 문구로 바꿉니다 - 예상 남은 시간과 경과 시간에 같이 씁니다. */
+private fun formatDurationSeconds(seconds: Long): String {
     val minutes = seconds / 60
     val remainingSeconds = seconds % 60
     return if (minutes > 0) "${minutes}분 ${remainingSeconds}초" else "${remainingSeconds}초"
 }
 
 /**
- * 오류 상태 - 오류 메시지와 다시 시도 버튼을 보여줍니다.
+ * 오류 상태 - 오류 메시지와 실패까지 걸린 시간, 다시 시도 버튼을 보여줍니다.
  */
 @Composable
 private fun ErrorView(
     error: String,
+    elapsedSeconds: Long,
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -300,6 +312,14 @@ private fun ErrorView(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "${formatDurationSeconds(elapsedSeconds)} 만에 실패",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
 
             Spacer(modifier = Modifier.height(16.dp))
