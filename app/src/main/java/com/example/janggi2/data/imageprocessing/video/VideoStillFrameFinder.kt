@@ -319,18 +319,30 @@ class VideoStillFrameFinder @Inject constructor(
      * 뼈대(확정된 수순) 사이에 빠진 수 번호가 있으면, 그 구간(양 끝 시각 사이)만 촘촘히
      * 재스캔해서 채워 넣습니다. 수 번호는 대략 균등한 속도로 흘러간다는 전제 하에,
      * 1차 훑기(10ms 간격)가 놓친 자리를 2차로 훨씬 촘촘하게(2ms 간격) 다시 찾습니다.
+     *
+     * **영상 맨 앞부분(첫 확정 항목 이전)도 똑같이 다룹니다.** 아래 로직은 원래 이미
+     * 확정된 두 항목 "사이"만 훑었는데, 그러면 1차 훑기가 0수/1수처럼 아주 짧게
+     * 스쳐 지나가는 첫 자리를 통째로 놓쳤을 때 재검색할 방법이 없었습니다(실측:
+     * 22수가 1초 남짓에 다 지나가는 영상에서 0/1수가 70ms도 안 되는 사이에 다
+     * 끝나 첫 확정 항목이 2수부터 시작한 사례). 뼈대의 첫 항목을 "가상의 -1수"
+     * 다음에 오는 항목으로 보고 동일한 재검색을 한 번 더 돌려, 0부터 첫 항목
+     * 직전까지를 메웁니다.
      */
     private suspend fun fillGaps(
         retriever: MediaMetadataRetriever,
         skeleton: List<Pair<Int, Long>>,
         onProgress: suspend (completed: Int, total: Int) -> Unit
     ): List<Pair<Int, Long>> {
-        if (skeleton.size < 2) return skeleton
+        if (skeleton.isEmpty()) return skeleton
+
+        val (firstValue, firstTime) = skeleton.first()
+        val needsLeadingFill = firstValue > 0 && firstTime > 0 && firstTime <= GAP_FILL_MAX_WINDOW_MS
 
         // 진행률 total은 "구간을 끝까지 다 훑는" 최악의 경우 기준입니다 - 목표를
         // 일찍 다 찾아 일찍 끝나는 건 UI 입장에서 그냥 이 단계가 예상보다 빨리
         // 끝나는 것뿐이라 문제 없습니다.
-        val total = (1 until skeleton.size).sumOf { i ->
+        val leadingTotal = if (needsLeadingFill) (firstTime / GAP_FILL_STEP_MS).toInt() else 0
+        val internalTotal = if (skeleton.size < 2) 0 else (1 until skeleton.size).sumOf { i ->
             val (prevValue, prevTime) = skeleton[i - 1]
             val (nextValue, nextTime) = skeleton[i]
             if (nextValue - prevValue > 1 && nextTime > prevTime &&
@@ -341,9 +353,19 @@ class VideoStillFrameFinder @Inject constructor(
                 0
             }
         }
+        val total = leadingTotal + internalTotal
 
         var completed = 0
-        val result = mutableListOf(skeleton.first())
+        val result = mutableListOf<Pair<Int, Long>>()
+        if (needsLeadingFill) {
+            result.addAll(
+                searchGapForMissingValues(retriever, -1, -GAP_FILL_STEP_MS, firstValue, firstTime) {
+                    completed++
+                    onProgress(completed, total)
+                }
+            )
+        }
+        result.add(skeleton.first())
         for (i in 1 until skeleton.size) {
             val (prevValue, prevTime) = skeleton[i - 1]
             val (nextValue, nextTime) = skeleton[i]
