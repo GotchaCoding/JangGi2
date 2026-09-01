@@ -87,18 +87,8 @@ sealed class VideoImportProgress {
  * 다 기물 변화가 없으므로 mover 쪽 상태는 position+2 프레임에서도 그대로 유효합니다.
  *
  * 체크포인트 프레임을 OCR이 통째로 못 읽었으면(position+1, position+2 프레임 둘 다
- * 없음) 그 수는 "no data"로 건너뛰고, 확정된 판은 그대로 유지한 채 다음 수로 넘어갑니다.
- *
- * **체크포인트는 있는데 한 수로 설명이 안 되면, 그 체크포인트로 확정된 판을
- * 재동기화합니다.** 체크포인트가 있어도 비교가 "한 수만의 깔끔한 변화"로 안 맞는
- * 경우가 있는데, 대개 그보다 더 앞에서 이미 다른 수 하나를 놓쳐서 실제로는 두 수
- * 이상이 겹쳐 있다는 뜻입니다. 이때 그냥 확정된 판을 그대로 두고 다음 수로 넘어가면,
- * 확정된 판은 계속 뒤처진 채로 남고 그 뒤의 모든 체크포인트 비교가 똑같은 이유로
- * 전부 실패합니다(실측 확인: 중간에 한 곳만 이렇게 걸려도 그 지점부터 영상 끝까지
- * 전부 도미노로 못 두는 사례가 나왔습니다). 그래서 이 수 자체는 "no data"로
- * 포기하되, 체크포인트 프레임이 담고 있는 실제 판 배치를 그대로 받아들여 확정된
- * 판을 그 시점으로 맞춰 놓습니다 - 그래야 바로 다음 수부터는 다시 정상적으로
- * 비교가 맞아 떨어집니다.
+ * 없음) 그 수는 "no data"로 건너뛰고, 확정된 판은 그대로 유지한 채 다음 수로 넘어갑니다
+ * - 그 사이 실제로 다른 수가 더 있었다면 다음 체크포인트와의 비교에서 자연히 걸러집니다.
  *
  * 사진 불러오기와 같은 방침입니다 - 인식이 안 되는 구간은 건너뛰고 되는 데까지만
  * 넣습니다. 별도 수동 보정 화면은 없습니다.
@@ -231,27 +221,22 @@ class ImportBoardFromVideoUseCase @Inject constructor(
         val lastPosition = recognized.maxOf { it.position }
         val maxAttempt = lastPosition - 1
 
-        var position = 1
-        while (position <= maxAttempt) {
+        for (position in 1..maxAttempt) {
             val mover = if (position % 2 == 1) Player.CHO else Player.HAN
             // 보통 체크포인트는 position+1 프레임입니다. 그런데 이 리플레이 화면은 한
             // 수 쉼이 발생하면 그 수 번호 표시 자체를 건너뛰고 카운터가 바로 다음
             // 번호로 넘어갑니다(예: 30수가 한 수 쉼이면 화면에 "30"이 아예 안 뜨고
             // "29" 다음 바로 "31"이 뜸) - 그래서 position+1 프레임이 없으면 position+2
             // 프레임을 대신 씁니다. 한 수 쉼은 양쪽 진영 다 기물 변화가 없으므로, mover
-            // 쪽 상태는 position+2 프레임에서도 그대로 유효합니다.
-            val checkpointPosition = when {
-                recognizedByPosition.containsKey(position + 1) -> position + 1
-                recognizedByPosition.containsKey(position + 2) -> position + 2
-                else -> null
-            }
-            if (checkpointPosition == null) {
+            // 쪽 상태는 position+2 프레임에서도 그대로 유효합니다. position+1 자체는
+            // 이 루프의 다음 바퀴(position+1)에서 정상적으로(체크포인트=position+2) 다시
+            // 처리되므로 여기서 따로 손댈 필요가 없습니다.
+            val checkpoint = recognizedByPosition[position + 1] ?: recognizedByPosition[position + 2]
+            if (checkpoint == null) {
                 skipped++
                 Log.d(TAG, "Position $position: no checkpoint frame at ${position + 1} or ${position + 2}, skipped")
-                position++
                 continue
             }
-            val checkpoint = recognizedByPosition.getValue(checkpointPosition)
 
             val confirmedSide = state.board.filterValues { it.player == mover }
             val checkpointSide = checkpoint.board.filterValues { it.player == mover }
@@ -265,7 +250,6 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                 } else {
                     skipped++
                 }
-                position++
                 continue
             }
 
@@ -274,24 +258,10 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                 state = applyFoundMove(state, move)
                 recovered++
                 logMove(position, move, isPass = false)
-                position++
-                continue
+            } else {
+                skipped++
+                Log.d(TAG, "Position $position: no clean move against checkpoint ${checkpoint.position}, skipped")
             }
-
-            // 한 수만의 깔끔한 변화로 설명이 안 됩니다 - 클래스 KDoc의 "체크포인트는
-            // 있는데 한 수로 설명이 안 되면" 참고. 이 수는 포기하되, 확정된 판을
-            // 체크포인트가 담고 있는 실제 배치로 재동기화해서 도미노 실패를 막습니다.
-            Log.d(
-                TAG,
-                "Position $position: no clean move against checkpoint $checkpointPosition, " +
-                    "resyncing confirmed board to it and skipping"
-            )
-            skipped += checkpointPosition - position
-            state = state.copy(
-                board = checkpoint.board,
-                currentPlayer = if ((checkpointPosition + 1) % 2 == 1) Player.CHO else Player.HAN
-            )
-            position = checkpointPosition
         }
         // 마지막 수([lastPosition])는 위 루프가 다루지 않습니다 - 다음 수 체크포인트가
         // 없어서, 그 수를 둔 쪽 자신의 위치가 안정됐는지 확인해줄 프레임이 원래
