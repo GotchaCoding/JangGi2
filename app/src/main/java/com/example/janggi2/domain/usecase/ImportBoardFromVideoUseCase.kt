@@ -70,11 +70,15 @@ sealed class VideoImportProgress {
  * **상대 진영**(이번에 안 움직인 쪽)의 위치만 읽으므로, 오늘 계속 발목 잡혔던 "착수
  * 완료 시점 오판" 문제를 원천적으로 피해갑니다.
  *
- * **시작 배치(0수)**: 이 앱의 기본 배치를 가정하지 않습니다 - 영상에 실제로 찍힌
- * 대기 화면(0수) 프레임을 그대로 인식해서 씁니다(마상 배치가 무엇이든 영상을 따라감).
- * 1수는 체크포인트가 2수 프레임이라 자연스럽게 되짚습니다. 2수의 체크포인트는
- * 3수 프레임입니다 - 1수 프레임은 화면 표시 특성상 가장 불안정한 자리라, 체크포인트로
- * 쓸 일 자체가 없어 자동으로 안 쓰입니다(특별한 예외 처리가 필요 없습니다).
+ * **시작 배치(0수)**: 이 앱의 기본 배치를 가정하지 않습니다 - 영상의 진짜 첫
+ * 프레임([VideoStillFrameFinder.findFirstFrame])을 수 번호 OCR과 무관하게 그대로
+ * 가져와 인식해서 씁니다(마상 배치가 무엇이든 영상을 따라감). 아직 아무 수도 안
+ * 뒀으니 안정 여부를 몰라도 안전한, 마지막 수와 정확히 대칭인 경우입니다. 실측에서
+ * 화면엔 "0/전체"가 또렷한데도 OCR이 그 구간 전체를 인식 못 하는 사례가 나와,
+ * [findStillFrames]의 OCR 기반 결과에 의존하지 않습니다. 1수는 체크포인트가 2수
+ * 프레임이라 자연스럽게 되짚습니다. 2수의 체크포인트는 3수 프레임입니다 - 1수
+ * 프레임은 화면 표시 특성상 가장 불안정한 자리라, 체크포인트로 쓸 일 자체가 없어
+ * 자동으로 안 쓰입니다(특별한 예외 처리가 필요 없습니다).
  *
  * **한 수 쉼과 체크포인트 번호 생략**: 이 리플레이 화면은 한 수 쉼이 발생하면 그 수
  * 번호 표시 자체를 건너뛰고 카운터가 바로 다음 번호로 넘어갑니다(예: 30수가 한 수
@@ -165,10 +169,28 @@ class ImportBoardFromVideoUseCase @Inject constructor(
             return@flow
         }
 
+        // 0수(대기 화면)는 OCR로 확인된 프레임 목록과 무관하게, 영상의 진짜 첫
+        // 프레임을 그대로 가져와 인식합니다 - 위 클래스 KDoc의 "시작 배치(0수)" 참고.
+        val firstFrameBitmap = stillFrameFinder.findFirstFrame(videoUri)
+        val firstImportedState = firstFrameBitmap?.let { bitmap ->
+            dumpDebugFrame(0, bitmap)
+            val state = withContext(Dispatchers.Default) {
+                recognitionService.extractFromBitmap(bitmap).getOrNull()?.let { toImportedBoardState(it) }
+            }
+            bitmap.recycle()
+            state
+        }
+        if (firstImportedState == null) {
+            emit(VideoImportProgress.Failed("영상 시작(0수) 프레임을 인식하지 못했습니다. 다른 영상으로 시도해 주세요."))
+            return@flow
+        }
+        // 사진 불러오기와 같은 이유로 viewpoint 는 첫 프레임에서만 정합니다.
+        val viewpoint = firstImportedState.detectedBottomPlayer()
+        val startBoard = firstImportedState.toGameState().board
+
         // 프레임마다 무거운 인식은 Default 로 튀었다가 emit 전에 반드시 돌아와야 합니다 -
         // Flow.emit 은 collect 와 같은 컨텍스트에서만 부를 수 있습니다(맥락 보존 규칙).
         val recognized = mutableListOf<RecognizedFrame>()
-        var firstImportedState: ImportedBoardState? = null
         for ((index, frame) in frames.withIndex()) {
             dumpDebugFrame(frame.position, frame.bitmap)
             val importedState = withContext(Dispatchers.Default) {
@@ -180,7 +202,6 @@ class ImportBoardFromVideoUseCase @Inject constructor(
                     "${importedState?.detectedPieces?.size ?: 0} pieces"
             )
             if (importedState != null) {
-                if (firstImportedState == null) firstImportedState = importedState
                 recognized.add(RecognizedFrame(frame.position, importedState.toGameState().board))
             }
             frame.bitmap.recycle()
@@ -192,18 +213,6 @@ class ImportBoardFromVideoUseCase @Inject constructor(
             return@flow
         }
 
-        // 사진 불러오기와 같은 이유로 viewpoint 는 첫 프레임에서만 정합니다.
-        val viewpoint = firstImportedState!!.detectedBottomPlayer()
-
-        // 0수(대기 화면)는 영상에 실제로 찍힌 시작 배치입니다 - 이 앱의 기본 배치를
-        // 가정하지 않고, 그 프레임을 그대로 인식해서 씁니다(마상 배치가 무엇이든
-        // 영상에 찍힌 그대로 따라갑니다).
-        val position0 = recognized.firstOrNull { it.position == 0 }
-        if (position0 == null) {
-            emit(VideoImportProgress.Failed("영상 시작(0수) 프레임을 인식하지 못했습니다. 다른 영상으로 시도해 주세요."))
-            return@flow
-        }
-        val startBoard = position0.board
         val recognizedByPosition = recognized.associateBy { it.position }
 
         var state = GameState(board = startBoard, currentPlayer = Player.CHO, startBoard = startBoard)

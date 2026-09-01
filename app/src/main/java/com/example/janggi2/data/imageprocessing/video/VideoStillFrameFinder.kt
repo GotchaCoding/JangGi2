@@ -192,6 +192,38 @@ class VideoStillFrameFinder @Inject constructor(
     }
 
     /**
+     * 영상의 진짜 첫 프레임을 수 번호 OCR과 무관하게 그대로 가져옵니다.
+     *
+     * **0수(대기 화면)는 [findFinalFrame]의 마지막 수와 정확히 대칭인 경우입니다.**
+     * 아직 아무 수도 안 뒀으니 상대 진영이 안정됐는지 몰라도 안전하고, 카운터가
+     * "0"으로 찍혀 있는지 OCR로 재확인할 필요도 원래 없습니다. 그런데 실측에서
+     * 화면엔 분명 "0/전체"가 또렷하게 찍혀 있는데도 OCR이 그 구간 전체에서 인식
+     * 자체를 계속 실패하는 사례가 나왔습니다 - [findStillFrames]의 OCR 기반
+     * 파이프라인에 0수를 맡기면 이 경우 0수 자체를 영원히 못 찾아 가져오기 전체가
+     * 실패합니다. 대신 영상의 맨 첫 프레임을 그대로 가져와 쓰면 이 문제를 원천적으로
+     * 피할 수 있습니다.
+     *
+     * @return 원본 해상도의 `ARGB_8888` 비트맵. 실패하면 null.
+     */
+    suspend fun findFirstFrame(videoUri: Uri): Bitmap? = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, videoUri)
+            val raw = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST)
+                ?: return@withContext null
+            // findFinalFrame과 같은 이유로 소프트웨어 비트맵으로 확정합니다.
+            val software = raw.copy(Bitmap.Config.ARGB_8888, false)
+            raw.recycle()
+            software
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read first frame", e)
+            null
+        } finally {
+            retriever.release()
+        }
+    }
+
+    /**
      * 영상의 진짜 마지막 프레임을 수 번호 OCR과 무관하게 그대로 가져옵니다.
      *
      * **마지막 수는 [findStillFrames]가 주는 프레임만으로는 안전하게 재구성할 수
@@ -283,14 +315,15 @@ class VideoStillFrameFinder @Inject constructor(
             // 뼈대(확정된 수순) - 시간순으로 정렬된 (수 번호, 시각) 쌍.
             val skeleton = pickRepresentativeIndices(plateaus)
                 .map { (value, sampleIdx) -> value to sampleTimesMs[sampleIdx] }
-            val filled = fillGaps(retriever, skeleton) { completed, total ->
+            val filled = fillGaps(retriever, skeleton, expectedTotal) { completed, total ->
                 emit(ScanEvent.Progress(ScanPhase.GAP_FILLING, completed, total))
             }
             // 값 기준 정렬은 시간순이 이미 깨진 항목(아래 reconcileChronology가 다루는
             // 경우)을 숨길 수 있어 위험하다고 위에서 경고했지만, gap-fill로 새로 채운
             // 항목들은 원래 skeleton 순서에 섞여 있지 않아 값 기준 정렬이 필요합니다.
             // 그래서 정렬 직후 reconcileChronology로 시간순 불변식을 다시 검증합니다.
-            val (representatives, reconciledPositions) = reconcileChronology(retriever, filled.sortedBy { it.first })
+            val (representatives, reconciledPositions) =
+                reconcileChronology(retriever, filled.sortedBy { it.first }, expectedTotal)
 
             Log.d(
                 TAG,
@@ -302,8 +335,13 @@ class VideoStillFrameFinder @Inject constructor(
             val stillFrames = mutableListOf<StillFrame>()
             for ((index, pair) in representatives.withIndex()) {
                 val (position, timeMs) = pair
-                fetchVerifiedFrame(retriever, position, timeMs, trustDominantMisread = position in reconciledPositions)
-                    ?.let { stillFrames.add(it) }
+                fetchVerifiedFrame(
+                    retriever,
+                    position,
+                    timeMs,
+                    trustDominantMisread = position in reconciledPositions,
+                    expectedTotal = expectedTotal
+                )?.let { stillFrames.add(it) }
                 emit(ScanEvent.Progress(ScanPhase.VERIFYING, index + 1, representatives.size))
             }
             emit(ScanEvent.Done(stillFrames))
@@ -331,6 +369,7 @@ class VideoStillFrameFinder @Inject constructor(
     private suspend fun fillGaps(
         retriever: MediaMetadataRetriever,
         skeleton: List<Pair<Int, Long>>,
+        expectedTotal: Int?,
         onProgress: suspend (completed: Int, total: Int) -> Unit
     ): List<Pair<Int, Long>> {
         if (skeleton.isEmpty()) return skeleton
@@ -359,7 +398,7 @@ class VideoStillFrameFinder @Inject constructor(
         val result = mutableListOf<Pair<Int, Long>>()
         if (needsLeadingFill) {
             result.addAll(
-                searchGapForMissingValues(retriever, -1, -GAP_FILL_STEP_MS, firstValue, firstTime) {
+                searchGapForMissingValues(retriever, -1, -GAP_FILL_STEP_MS, firstValue, firstTime, expectedTotal) {
                     completed++
                     onProgress(completed, total)
                 }
@@ -373,7 +412,7 @@ class VideoStillFrameFinder @Inject constructor(
                 nextTime - prevTime <= GAP_FILL_MAX_WINDOW_MS
             ) {
                 result.addAll(
-                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime) {
+                    searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime, expectedTotal) {
                         completed++
                         onProgress(completed, total)
                     }
@@ -401,6 +440,12 @@ class VideoStillFrameFinder @Inject constructor(
      * 구간을 과반 이상 지배하는 다른 값이 있으면(우연한 잡음이 아니라 이 구간
      * 내내 일관된 오독이라는 뜻) 그 값을 목표에 대한 자릿수 오독으로 보고
      * 받아들입니다.
+     *
+     * **목표에 1수가 껴 있으면 화면이 [expectedTotal]로 찍혀도 인정합니다.** 이
+     * 화면의 표시 버그(1수가 "1/전체" 대신 "전체/전체"로 찍힘, [correctFirstMoveLabel]
+     * 참고)는 1차 훑기가 잡아낸 뼈대에서만 보정되고, 여기 문자 그대로 비교하는
+     * 로직은 몰랐습니다 - 그래서 화면에 정확히 "전체/전체"가 찍혀 있어도(OCR도
+     * 맞게 읽었어도) 1수를 영원히 못 찾는 사례가 실측으로 확인됐습니다.
      */
     private suspend fun searchGapForMissingValues(
         retriever: MediaMetadataRetriever,
@@ -408,6 +453,7 @@ class VideoStillFrameFinder @Inject constructor(
         prevTime: Long,
         nextValue: Int,
         nextTime: Long,
+        expectedTotal: Int?,
         onSample: suspend () -> Unit = {}
     ): List<Pair<Int, Long>> {
         val targets = (prevValue + 1 until nextValue).toMutableSet()
@@ -427,9 +473,14 @@ class VideoStillFrameFinder @Inject constructor(
             // TEMP DEBUG: 목표값이 안 나올 때 이 구간에서 실제로 뭐가 읽혔는지 보려고
             // 매 표본을 그대로 기록합니다. 확인 끝나면 지울 코드입니다.
             Log.d(TAG, "  gap-fill sample t=${t}ms targets=$targets read=$reading raw=$rawReading")
-            if (reading != null && reading in targets) {
-                found[reading] = t
-                targets.remove(reading)
+            val matchedTarget = when {
+                reading != null && reading in targets -> reading
+                reading != null && expectedTotal != null && reading == expectedTotal && 1 in targets -> 1
+                else -> null
+            }
+            if (matchedTarget != null) {
+                found[matchedTarget] = t
+                targets.remove(matchedTarget)
             } else if (reading != null && reading != prevValue) {
                 misreadCandidates.add(t to reading)
             }
@@ -486,7 +537,8 @@ class VideoStillFrameFinder @Inject constructor(
      */
     private suspend fun reconcileChronology(
         retriever: MediaMetadataRetriever,
-        representatives: List<Pair<Int, Long>>
+        representatives: List<Pair<Int, Long>>,
+        expectedTotal: Int?
     ): Pair<List<Pair<Int, Long>>, Set<Int>> {
         val result = mutableListOf<Pair<Int, Long>>()
         val reconciled = mutableSetOf<Int>()
@@ -507,7 +559,7 @@ class VideoStillFrameFinder @Inject constructor(
                 "Position $value: timestamp ${time}ms is not after previous confirmed ${prevTime}ms, " +
                     "re-searching (${prevTime}ms, ${nextTime}ms) for it"
             )
-            val recovered = searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime)
+            val recovered = searchGapForMissingValues(retriever, prevValue, prevTime, nextValue, nextTime, expectedTotal)
                 .firstOrNull { it.first == value }
             if (recovered != null) {
                 result.add(value to recovered.second)
@@ -579,12 +631,20 @@ class VideoStillFrameFinder @Inject constructor(
      * 사례가 나왔습니다 - "처음 나타난 시점"에 최대한 가까울수록 그런 애니메이션이
      * 아직 안 끼어들었을 가능성이 높으므로, 합의된 후보들 중 가장 이른 시각을
      * 명시적으로 고릅니다.
+     *
+     * **1수는 화면에 절대 "1"이라고 안 찍힙니다.** [correctFirstMoveLabel]이 뼈대 단계에서
+     * 이 고원의 **라벨만** 1로 바로잡아 두지만, 그 시각 화면 자체는 여전히 "전체/전체"를
+     * 보여줍니다. 그런데 검증은 항상 "화면에 [position]이 문자 그대로 찍혀 있는가"를
+     * 재확인하므로, 라벨만 바뀐 1수는 여기서 절대 리터럴로 일치할 수 없어 항상
+     * 버려졌습니다. 그래서 [position]이 1일 때만 예외적으로 "화면이 [expectedTotal]을
+     * 보여줘도 그게 곧 1이다"를 인정합니다.
      */
     private suspend fun fetchVerifiedFrame(
         retriever: MediaMetadataRetriever,
         position: Int,
         timeMs: Long,
-        trustDominantMisread: Boolean
+        trustDominantMisread: Boolean,
+        expectedTotal: Int?
     ): StillFrame? {
         val readings = VERIFY_OFFSETS_MS.mapNotNull { offset ->
             val t = timeMs + offset
@@ -596,7 +656,9 @@ class VideoStillFrameFinder @Inject constructor(
             t to reading
         }
 
-        val literalTimes = readings.filter { it.second == position }.map { it.first }
+        val literalTimes = readings
+            .filter { it.second == position || (position == 1 && expectedTotal != null && it.second == expectedTotal) }
+            .map { it.first }
         val acceptedTime = if (literalTimes.size >= REQUIRED_AGREEMENTS) {
             literalTimes.min()
         } else if (trustDominantMisread) {
