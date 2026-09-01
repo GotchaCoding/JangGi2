@@ -638,6 +638,18 @@ class VideoStillFrameFinder @Inject constructor(
      * 재확인하므로, 라벨만 바뀐 1수는 여기서 절대 리터럴로 일치할 수 없어 항상
      * 버려졌습니다. 그래서 [position]이 1일 때만 예외적으로 "화면이 [expectedTotal]을
      * 보여줘도 그게 곧 1이다"를 인정합니다.
+     *
+     * **양방향 조기 종료.** 오프셋을 0에서 바깥으로 넓혀가다가 한쪽 방향에서 [position]이
+     * 아닌 값(그리고 null이 아닌 값)을 만나면, 그 방향은 이미 이 위치의 고원을 벗어나
+     * 이웃 수의 화면으로 넘어간 것으로 보고 그 방향은 더 훑지 않습니다(고원이 50ms보다
+     * 좁으면 실제로 이웃 수의 진짜 화면이 창에 들어올 수 있음). 양쪽 다 벗어났거나
+     * [REQUIRED_AGREEMENTS]를 채우면 그 자리에서 멈춥니다 - 대부분의 위치는 몇 번
+     * 만에 끝나 51번을 다 돌 필요가 없어집니다.
+     *
+     * 단, [trustDominantMisread]가 켜진 경우는 예외로 51개를 그대로 다 훑습니다 -
+     * 이 경로가 구제하는 건 "같은 고원 안에서 내내 반복되는 오독"(6/9 헷갈림 등)인데,
+     * 이웃 값이 아니라 바로 그 반복되는 오독 자체를 만나는 순간 조기 종료해버리면
+     * 다수결에 쓸 표본이 부족해져 이 구제 메커니즘 자체가 무력화됩니다.
      */
     private suspend fun fetchVerifiedFrame(
         retriever: MediaMetadataRetriever,
@@ -646,22 +658,42 @@ class VideoStillFrameFinder @Inject constructor(
         trustDominantMisread: Boolean,
         expectedTotal: Int?
     ): StillFrame? {
-        val readings = VERIFY_OFFSETS_MS.mapNotNull { offset ->
+        fun matchesTarget(reading: Int?) =
+            reading == position || (position == 1 && expectedTotal != null && reading == expectedTotal)
+
+        val fastLiteralTimes = mutableListOf<Long>()
+        var negativeBlocked = false
+        var positiveBlocked = false
+        for (offset in VERIFY_OFFSETS_MS) {
+            if (offset < 0 && negativeBlocked) continue
+            if (offset > 0 && positiveBlocked) continue
             val t = timeMs + offset
-            if (t < 0) return@mapNotNull null
-            val bitmap = retriever.getFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                ?: return@mapNotNull null
+            if (t < 0) continue
+            val bitmap = retriever.getFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST) ?: continue
             val reading = readCounterFrom(bitmap)?.first
             bitmap.recycle()
-            t to reading
+            if (matchesTarget(reading)) {
+                fastLiteralTimes.add(t)
+                if (fastLiteralTimes.size >= REQUIRED_AGREEMENTS) break
+            } else if (reading != null) {
+                if (offset < 0) negativeBlocked = true
+                if (offset > 0) positiveBlocked = true
+            }
+            if (negativeBlocked && positiveBlocked) break
         }
 
-        val literalTimes = readings
-            .filter { it.second == position || (position == 1 && expectedTotal != null && it.second == expectedTotal) }
-            .map { it.first }
-        val acceptedTime = if (literalTimes.size >= REQUIRED_AGREEMENTS) {
-            literalTimes.min()
+        val acceptedTime = if (fastLiteralTimes.size >= REQUIRED_AGREEMENTS) {
+            fastLiteralTimes.min()
         } else if (trustDominantMisread) {
+            val readings = VERIFY_OFFSETS_MS.mapNotNull { offset ->
+                val t = timeMs + offset
+                if (t < 0) return@mapNotNull null
+                val bitmap = retriever.getFrameAtTime(t * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                    ?: return@mapNotNull null
+                val reading = readCounterFrom(bitmap)?.first
+                bitmap.recycle()
+                t to reading
+            }
             val nonNull = readings.mapNotNull { it.second }
             val dominant = nonNull.groupingBy { it }.eachCount().maxByOrNull { it.value }
             if (dominant != null && dominant.value >= REQUIRED_AGREEMENTS && dominant.value * 2 > nonNull.size) {
@@ -682,7 +714,7 @@ class VideoStillFrameFinder @Inject constructor(
         if (acceptedTime == null) {
             Log.w(
                 TAG,
-                "Position $position: only ${literalTimes.size}/$REQUIRED_AGREEMENTS agreeing sample(s) " +
+                "Position $position: only ${fastLiteralTimes.size}/$REQUIRED_AGREEMENTS agreeing sample(s) " +
                     "near ${timeMs}ms, dropping"
             )
             return null
