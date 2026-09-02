@@ -1,5 +1,6 @@
 package com.example.janggi2.data.mapper
 
+import com.example.janggi2.data.local.database.entity.GameCommentEntity
 import com.example.janggi2.data.local.database.entity.GameEntity
 import com.example.janggi2.data.local.database.entity.GameReviewEntity
 import com.example.janggi2.domain.model.GameReview
@@ -11,6 +12,7 @@ import com.example.janggi2.domain.model.MoveReview
 import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
+import com.example.janggi2.domain.model.ReviewComment
 import com.example.janggi2.domain.repository.SavedReview
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -159,6 +161,34 @@ class GameMapper {
             android.util.Log.e("GameMapper", "Failed to deserialize game review: ${e.message}")
             GameReview(emptyList())
         }
+    }
+
+    /**
+     * Converts a [ReviewComment] to a [GameCommentEntity] for database storage.
+     */
+    fun toCommentEntity(comment: ReviewComment): GameCommentEntity {
+        return GameCommentEntity(
+            id = comment.id,
+            reviewId = comment.reviewId,
+            message = comment.message,
+            branchStartIndex = comment.branchStartIndex,
+            movesJson = serializeMoveHistory(comment.moves),
+            createdAt = comment.createdAt
+        )
+    }
+
+    /**
+     * Converts a [GameCommentEntity] from database back to a [ReviewComment].
+     */
+    fun commentFromEntity(entity: GameCommentEntity): ReviewComment {
+        return ReviewComment(
+            id = entity.id,
+            reviewId = entity.reviewId,
+            message = entity.message,
+            branchStartIndex = entity.branchStartIndex,
+            moves = deserializeMoveHistory(entity.movesJson),
+            createdAt = entity.createdAt
+        )
     }
 
     /**

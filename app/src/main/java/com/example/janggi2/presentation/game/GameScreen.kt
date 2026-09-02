@@ -59,6 +59,7 @@ import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
 import com.example.janggi2.presentation.game.components.PieceView
 import com.example.janggi2.presentation.game.components.ReplayControls
+import com.example.janggi2.presentation.game.components.ReviewCommentsPanel
 import com.example.janggi2.presentation.game.components.ReviewProgressDialog
 import com.example.janggi2.presentation.game.components.ReviewSummaryRow
 import com.example.janggi2.presentation.game.components.TurnIndicator
@@ -80,13 +81,23 @@ fun GameScreen(
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
 
-    // 복기 중에는 시스템 뒤로가기(제스처 포함)가 앱을 나가는 대신 "여기서 계속"과
-    // 같은 동작을 하도록 가로챕니다. "복기 종료"(ExitReplayMode)는 늘 마지막 수순
+    // 복기 중에는 시스템 뒤로가기(제스처 포함)가 앱을 나가는 대신 "검토"(원래 이름
+    // "여기서 계속")와 같은 동작을 하도록 가로챕니다. "복기 종료"(ExitReplayMode)는 늘 마지막 수순
     // 으로 돌아가버려서, 보고 있던 수순이 아니라 엉뚱한(마지막) 국면이 열리는
     // 것처럼 보였습니다 - ContinueFromReplay 는 지금 보고 있던 그 수순을 그대로
     // 살아있는 대국 상태로 만듭니다.
     BackHandler(enabled = isReplay) {
         viewModel.onEvent(GameUiEvent.ContinueFromReplay)
+    }
+
+    // AI 리뷰를 "검토"로 갈라져 나가 수를 두는 중(isReplayMode 는 꺼졌지만 그 리뷰를
+    // 벗어난 건 아님)에 뒤로가기를 하면, 검토를 눌렀던 그 지점의 AI 리뷰 화면으로
+    // 돌아갑니다 - 갈라져 나가 둬 본 수는 버려집니다.
+    val isReviewBranch = !isReplay &&
+        uiState.currentReviewId != null &&
+        uiState.reviewBranchStartIndex != null
+    BackHandler(enabled = isReviewBranch) {
+        viewModel.onEvent(GameUiEvent.BackToReviewFromBranch)
     }
 
     Scaffold(
@@ -108,18 +119,24 @@ fun GameScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 기보 이름. 저장된 적 없는 대국(새 대국·자동저장 복원)은 이름이 없습니다.
-            // 복기 모드는 판 아래 수 기록까지 한 화면에 보여야 해서 여백을 더 줄입니다.
-            Text(
-                text = uiState.currentGameName ?: "이름 없는 대국",
-                style = if (isReplay) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
-                maxLines = 1,
-                modifier = Modifier.padding(
-                    top = if (isReplay) 6.dp else 16.dp,
-                    bottom = if (isReplay) 2.dp else 8.dp,
-                    start = 16.dp,
-                    end = 16.dp
+            // 복기 중이거나 AI 리뷰를 "검토"로 갈라져 나가 보는 중에는 판을 화면 맨
+            // 위로 올리려고 이 제목 자체를 안 보여줍니다 - "검토"를 누르면
+            // isReplayMode 는 꺼지지만 currentReviewId 는 그대로라 이 화면인 동안
+            // 계속 안 보여야 합니다.
+            val hideTitle = isReplay || uiState.currentReviewId != null
+            if (!hideTitle) {
+                Text(
+                    text = uiState.currentGameName ?: "이름 없는 대국",
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 1,
+                    modifier = Modifier.padding(
+                        top = 16.dp,
+                        bottom = 8.dp,
+                        start = 16.dp,
+                        end = 16.dp
+                    )
                 )
-            )
+            }
 
             // 점수는 판에서 계산하므로 복기 중에도 그 시점 점수가 그대로 맞습니다.
             val scoreboard = remember(uiState.gameState.board) {
@@ -256,6 +273,25 @@ fun GameScreen(
                     },
                     isReviewLoading = uiState.isReviewLoading,
                     canReview = uiState.gameState.moveHistory.isNotEmpty()
+                )
+            }
+
+            // AI 리뷰를 보는 중에만 댓글 영역을 보여줍니다("검토"로 갈라져 나간 뒤에도
+            // isReplayMode 는 꺼지지만 currentReviewId 는 남아 있어 계속 보입니다).
+            if (uiState.currentReviewId != null) {
+                ReviewCommentsPanel(
+                    comments = uiState.comments,
+                    commentInput = uiState.commentInput,
+                    canWrite = uiState.reviewBranchStartIndex != null,
+                    onCommentInputChange = { text ->
+                        viewModel.onEvent(GameUiEvent.CommentTextChanged(text))
+                    },
+                    onSaveComment = {
+                        viewModel.onEvent(GameUiEvent.SaveComment)
+                    },
+                    onCommentClick = { comment ->
+                        viewModel.onEvent(GameUiEvent.OpenComment(comment))
+                    }
                 )
             }
 

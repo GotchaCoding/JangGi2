@@ -10,6 +10,7 @@ import com.example.janggi2.domain.model.Piece
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
 import com.example.janggi2.domain.model.HorseElephantSetup
+import com.example.janggi2.domain.model.ReviewComment
 import com.example.janggi2.domain.model.initialGameState
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.rules.CheckDetector
@@ -17,6 +18,7 @@ import com.example.janggi2.domain.rules.GameRules
 import com.example.janggi2.domain.rules.RepetitionJudge
 import com.example.janggi2.domain.ai.AiEngine
 import com.example.janggi2.domain.usecase.GetAiMoveUseCase
+import com.example.janggi2.domain.usecase.GetGameCommentsUseCase
 import com.example.janggi2.domain.usecase.GetHintUseCase
 import com.example.janggi2.domain.usecase.InitializeAiUseCase
 import com.example.janggi2.domain.usecase.LoadGameUseCase
@@ -24,6 +26,7 @@ import com.example.janggi2.domain.usecase.LoadGameForReplayUseCase
 import com.example.janggi2.domain.usecase.LoadGameReviewUseCase
 import com.example.janggi2.domain.usecase.ReviewGameUseCase
 import com.example.janggi2.domain.usecase.ReviewProgress
+import com.example.janggi2.domain.usecase.SaveGameCommentUseCase
 import com.example.janggi2.domain.usecase.SaveGameReviewUseCase
 import com.example.janggi2.domain.usecase.SaveGameUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -64,7 +67,17 @@ data class GameUiState(
     val gameReview: GameReview? = null,
     val reviewError: String? = null,
     /** 저장된 이름으로 불러왔거나 방금 저장한 대국의 이름. 새/자동저장 복원 대국은 null. */
-    val currentGameName: String? = null
+    val currentGameName: String? = null,
+    /** 지금 보고 있는 AI 리뷰의 id. [GameViewModel.loadReviewForReplay]로 불러왔을 때만 값이 있고,
+     *  그 외(새 대국·기보 불러오기 등)에는 null입니다 - 댓글 UI는 이 값이 있을 때만 보입니다. */
+    val currentReviewId: Long? = null,
+    /** "검토"(원래 이름 "여기서 계속")를 누른 시점의 moveHistory 크기. 그 뒤로 둔 수만
+     *  댓글에 딸린 수순으로 저장합니다. 아직 검토를 누르지 않았으면 null. */
+    val reviewBranchStartIndex: Int? = null,
+    /** 지금 리뷰에 달린 댓글 목록(시간순). */
+    val comments: List<ReviewComment> = emptyList(),
+    /** 댓글 입력창에 지금 쓰고 있는 텍스트. */
+    val commentInput: String = ""
 )
 
 /**
@@ -84,6 +97,8 @@ class GameViewModel @Inject constructor(
     private val getHintUseCase: GetHintUseCase,
     private val reviewGameUseCase: ReviewGameUseCase,
     private val saveGameReviewUseCase: SaveGameReviewUseCase,
+    private val saveGameCommentUseCase: SaveGameCommentUseCase,
+    private val getGameCommentsUseCase: GetGameCommentsUseCase,
     repetitionJudge: RepetitionJudge
 ) : ViewModel() {
     companion object {
@@ -98,6 +113,9 @@ class GameViewModel @Inject constructor(
 
     /** 진행 중인 AI 리뷰. 화면을 벗어나거나 취소하면 잘라냅니다. */
     private var reviewJob: Job? = null
+
+    /** 지금 리뷰의 댓글 목록을 계속 관찰하는 구독. 다른 리뷰를 불러오면 갈아끼웁니다. */
+    private var commentsJob: Job? = null
     private val _uiState = MutableStateFlow(GameUiState())
     val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
@@ -164,6 +182,10 @@ class GameViewModel @Inject constructor(
             is GameUiEvent.CancelReview -> cancelReview()
             is GameUiEvent.DismissReviewError -> dismissReviewError()
             is GameUiEvent.JumpToMove -> jumpToMove(event.moveIndex)
+            is GameUiEvent.CommentTextChanged -> onCommentTextChanged(event.text)
+            is GameUiEvent.SaveComment -> saveComment()
+            is GameUiEvent.OpenComment -> openComment(event.comment)
+            is GameUiEvent.BackToReviewFromBranch -> backToReviewFromBranch()
         }
     }
 
@@ -429,6 +451,7 @@ class GameViewModel @Inject constructor(
                 val loadedState = loadGameUseCase(gameId)
                 if (loadedState != null) {
                     reviewJob?.cancel()
+                    commentsJob?.cancel()
                     _uiState.value = GameUiState(
                         gameState = loadedState,
                         selectedPiece = null,
@@ -449,6 +472,7 @@ class GameViewModel @Inject constructor(
      */
     fun resetGame() {
         reviewJob?.cancel()
+        commentsJob?.cancel()
         _uiState.value = GameUiState(
             gameState = initialGameState(),
             selectedPiece = null,
@@ -496,6 +520,7 @@ class GameViewModel @Inject constructor(
         )
 
         reviewJob?.cancel()
+        commentsJob?.cancel()
         _uiState.value = GameUiState(
             gameState = newGameState,
             selectedPiece = null,
@@ -542,6 +567,7 @@ class GameViewModel @Inject constructor(
                 val loadedState = loadGameForReplayUseCase(gameId)
                 if (loadedState != null) {
                     reviewJob?.cancel()
+                    commentsJob?.cancel()
                     _uiState.value = GameUiState(
                         gameState = loadedState,
                         selectedPiece = null,
@@ -565,6 +591,7 @@ class GameViewModel @Inject constructor(
      */
     fun loadImportedGame(gameState: GameState, viewpoint: Player = Player.HAN) {
         reviewJob?.cancel()
+        commentsJob?.cancel()
         _uiState.value = GameUiState(
             gameState = gameState,
             selectedPiece = null,
@@ -686,9 +713,13 @@ class GameViewModel @Inject constructor(
 
     /**
      * Continues playing from the current replay position.
+     *
+     * AI 리뷰를 보는 중이었다면([GameUiState.currentReviewId] 있음), 지금 replayPosition을
+     * "갈라져 나간 지점"으로 기억해 둡니다 - 이 뒤로 실제 둔 수만 댓글에 딸린 수순으로 남습니다.
      */
     private fun continueFromReplay() {
         val currentState = _uiState.value
+        val branchStartIndex = currentState.gameState.replayPosition
         val newGameState = currentState.gameState.continueFromReplayPosition()
         _uiState.value = currentState.copy(
             gameState = newGameState,
@@ -696,7 +727,8 @@ class GameViewModel @Inject constructor(
             validMoves = emptyList(),
             hint = null,
             gameReview = null,
-            reviewProgress = null
+            reviewProgress = null,
+            reviewBranchStartIndex = if (currentState.currentReviewId != null) branchStartIndex else null
         )
         // Auto-save after continuing from replay
         autoSave()
@@ -939,11 +971,115 @@ class GameViewModel @Inject constructor(
                         showGameOverDialog = false,
                         isLoading = false,
                         gameReview = loaded.review,
-                        currentGameName = name
+                        currentGameName = name,
+                        currentReviewId = reviewId
                     )
+                    observeComments(reviewId)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading saved AI review", e)
+            }
+        }
+    }
+
+    /** [reviewId]에 달린 댓글 목록을 계속 관찰해 상태에 반영합니다. */
+    private fun observeComments(reviewId: Long) {
+        commentsJob?.cancel()
+        commentsJob = viewModelScope.launch {
+            getGameCommentsUseCase(reviewId).collect { comments ->
+                _uiState.value = _uiState.value.copy(comments = comments)
+            }
+        }
+    }
+
+    private fun onCommentTextChanged(text: String) {
+        _uiState.value = _uiState.value.copy(commentInput = text)
+    }
+
+    /**
+     * 지금 입력해 둔 메시지로, "검토"를 누른 뒤 실제로 둬 본 수순([GameUiState.reviewBranchStartIndex]
+     * 부터 지금까지)을 댓글로 남깁니다.
+     */
+    private fun saveComment() {
+        val currentState = _uiState.value
+        val reviewId = currentState.currentReviewId ?: return
+        val branchStartIndex = currentState.reviewBranchStartIndex ?: return
+        val message = currentState.commentInput.trim()
+        if (message.isEmpty()) return
+
+        val testedMoves = currentState.gameState.moveHistory.drop(branchStartIndex)
+        viewModelScope.launch {
+            try {
+                saveGameCommentUseCase(reviewId, message, branchStartIndex, testedMoves)
+                _uiState.value = _uiState.value.copy(commentInput = "")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving review comment", e)
+            }
+        }
+    }
+
+    /**
+     * 댓글을 눌러, 그 댓글을 남길 때 봤던 수순을 그대로 되살립니다 - 원래 기보를
+     * [comment.branchStartIndex] 까지 다시 재생한 뒤 [comment.moves] 를 이어 붙이고,
+     * "검토"를 눌렀던 바로 그 지점([comment.branchStartIndex])에서부터 복기를
+     * 시작합니다 - 거기서 ▶ 로 한 수씩 넘겨 가며 그때 둬 본 수순을 그대로 따라갈
+     * 수 있습니다. DB에서 원래 기보를 다시 읽어옵니다 - 지금 화면의 gameState는
+     * 그 뒤 "검토"로 더 진행됐을 수 있어(moveHistory가 늘어남), 그걸 그대로 믿으면
+     * 다른 시점 기준 branchStartIndex와 어긋날 수 있습니다.
+     */
+    private fun openComment(comment: ReviewComment) {
+        viewModelScope.launch {
+            try {
+                val original = loadGameReviewUseCase(comment.reviewId) ?: return@launch
+                val prefix = original.gameState.moveHistory.take(comment.branchStartIndex)
+                val fullHistory = prefix + comment.moves
+                val branchState = GameState(
+                    board = original.gameState.startBoard ?: initialGameState().board,
+                    startBoard = original.gameState.startBoard,
+                    moveHistory = fullHistory,
+                    isReplayMode = true
+                ).reconstructStateAtPosition(comment.branchStartIndex)
+
+                _uiState.value = _uiState.value.copy(
+                    gameState = branchState,
+                    selectedPiece = null,
+                    validMoves = emptyList(),
+                    hint = null,
+                    reviewBranchStartIndex = null
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error opening review comment", e)
+            }
+        }
+    }
+
+    /**
+     * "검토"로 갈라져 나가 수를 두는 중에 뒤로가기를 하면, 그 검토를 눌렀던 지점
+     * (원래 리뷰의 그 수)으로 되돌아갑니다. DB에서 원래 리뷰를 다시 읽어옵니다 -
+     * 지금 화면의 gameState는 갈라져 나가면서 그 뒤 수순이 잘려 있어([GameState.continueFromReplayPosition]
+     * 참고), 그걸로는 원래 리뷰의 그 지점 이후 수를 복원할 수 없습니다.
+     */
+    private fun backToReviewFromBranch() {
+        val currentState = _uiState.value
+        val reviewId = currentState.currentReviewId ?: return
+        val branchStartIndex = currentState.reviewBranchStartIndex ?: return
+
+        viewModelScope.launch {
+            try {
+                val original = loadGameReviewUseCase(reviewId) ?: return@launch
+                // loadGameReviewUseCase 가 이미 enterReplayMode() 를 해 둬서 replayTo 를 바로 쓸 수 있습니다.
+                val branchState = original.gameState.replayTo(branchStartIndex)
+
+                _uiState.value = currentState.copy(
+                    gameState = branchState,
+                    selectedPiece = null,
+                    validMoves = emptyList(),
+                    hint = null,
+                    gameReview = original.review,
+                    reviewBranchStartIndex = null
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error returning to AI review from branch", e)
             }
         }
     }

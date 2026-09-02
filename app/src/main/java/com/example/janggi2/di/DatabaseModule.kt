@@ -3,6 +3,7 @@ package com.example.janggi2.di
 import android.content.Context
 import androidx.room.Room
 import com.example.janggi2.data.local.database.JangGiDatabase
+import com.example.janggi2.data.local.database.dao.GameCommentDao
 import com.example.janggi2.data.local.database.dao.GameDao
 import com.example.janggi2.data.local.database.dao.GameReviewDao
 import com.example.janggi2.data.mapper.GameMapper
@@ -34,7 +35,9 @@ object DatabaseModule {
                 JangGiDatabase.MIGRATION_1_2,
                 JangGiDatabase.MIGRATION_2_3,
                 JangGiDatabase.MIGRATION_3_4,
-                JangGiDatabase.MIGRATION_4_5
+                JangGiDatabase.MIGRATION_4_5,
+                JangGiDatabase.MIGRATION_5_6,
+                JangGiDatabase.MIGRATION_6_7
             )
             .build()
     }
@@ -49,6 +52,12 @@ object DatabaseModule {
     @Singleton
     fun provideGameReviewDao(database: JangGiDatabase): GameReviewDao {
         return database.gameReviewDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideGameCommentDao(database: JangGiDatabase): GameCommentDao {
+        return database.gameCommentDao()
     }
 
     @Provides

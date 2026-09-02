@@ -4,8 +4,10 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.janggi2.data.local.database.dao.GameCommentDao
 import com.example.janggi2.data.local.database.dao.GameDao
 import com.example.janggi2.data.local.database.dao.GameReviewDao
+import com.example.janggi2.data.local.database.entity.GameCommentEntity
 import com.example.janggi2.data.local.database.entity.GameEntity
 import com.example.janggi2.data.local.database.entity.GameReviewEntity
 
@@ -13,13 +15,14 @@ import com.example.janggi2.data.local.database.entity.GameReviewEntity
  * Room database for JangGi2 app.
  */
 @Database(
-    entities = [GameEntity::class, GameReviewEntity::class],
-    version = 5,
+    entities = [GameEntity::class, GameReviewEntity::class, GameCommentEntity::class],
+    version = 7,
     exportSchema = false
 )
 abstract class JangGiDatabase : RoomDatabase() {
     abstract fun gameDao(): GameDao
     abstract fun gameReviewDao(): GameReviewDao
+    abstract fun gameCommentDao(): GameCommentDao
 
     companion object {
         /**
@@ -81,6 +84,37 @@ abstract class JangGiDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+            }
+        }
+
+        /**
+         * Migration from version 5 to 6: Add the game_comments table so a 검토(테스트
+         * 수순)에 댓글을 남기면 그 메시지와 둬 본 수순이 같이 저장됩니다.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `game_comments` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `reviewId` INTEGER NOT NULL,
+                        `message` TEXT NOT NULL,
+                        `movesJson` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
+         * Migration from version 6 to 7: Add branchStartIndex column to game_comments,
+         * so 댓글을 다시 열면 원래 기보의 그 지점부터 재생한 뒤 둬 본 수순을 이어
+         * 붙여 그대로 되살릴 수 있습니다.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE game_comments ADD COLUMN branchStartIndex INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

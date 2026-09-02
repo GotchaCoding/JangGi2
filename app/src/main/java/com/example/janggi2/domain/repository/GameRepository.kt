@@ -2,6 +2,8 @@ package com.example.janggi2.domain.repository
 
 import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.model.ReviewComment
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -82,6 +84,17 @@ interface GameRepository {
      * Deletes a saved review by ID.
      */
     suspend fun deleteReview(reviewId: Long)
+
+    /**
+     * "검토"로 갈라져 나가 둬 본 수순에 댓글을 남깁니다.
+     * @return The ID of the saved comment
+     */
+    suspend fun saveComment(reviewId: Long, message: String, branchStartIndex: Int, moves: List<Move>): Long
+
+    /**
+     * 특정 리뷰에 달린 댓글을 시간순으로 Flow 로 냅니다.
+     */
+    fun getCommentsForReview(reviewId: Long): Flow<List<ReviewComment>>
 }
 
 /**

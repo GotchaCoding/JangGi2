@@ -98,7 +98,7 @@ fun ReplayControls(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
         ) {
             OutlinedButton(onClick = onContinueClick, contentPadding = ACTION_BUTTON_PADDING) {
-                Text("여기서 계속", style = MaterialTheme.typography.labelMedium)
+                Text("검토", style = MaterialTheme.typography.labelMedium)
             }
 
             TextButton(onClick = onExitReplayClick, contentPadding = ACTION_BUTTON_PADDING) {

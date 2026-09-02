@@ -4,6 +4,7 @@ import com.example.janggi2.domain.model.GameMode
 import com.example.janggi2.domain.model.HorseElephantSetup
 import com.example.janggi2.domain.model.Player
 import com.example.janggi2.domain.model.Position
+import com.example.janggi2.domain.model.ReviewComment
 
 /**
  * Sealed class representing user interactions with the game board.
@@ -163,4 +164,26 @@ sealed class GameUiEvent {
      * @param moveIndex moveHistory 의 0부터 시작하는 인덱스
      */
     data class JumpToMove(val moveIndex: Int) : GameUiEvent()
+
+    /**
+     * 댓글 입력창의 내용이 바뀔 때.
+     */
+    data class CommentTextChanged(val text: String) : GameUiEvent()
+
+    /**
+     * "검토"로 갈라져 나가 둬 본 수순에, 입력해 둔 메시지로 댓글을 남깁니다.
+     */
+    data object SaveComment : GameUiEvent()
+
+    /**
+     * 댓글을 눌러, 그 댓글을 남길 때 봤던 수순을 그대로 봅니다.
+     */
+    data class OpenComment(val comment: ReviewComment) : GameUiEvent()
+
+    /**
+     * AI 리뷰를 "검토"로 갈라져 나가 수를 두는 중에 뒤로가기(제스처 포함)를 하면,
+     * 그 검토를 눌렀던 지점(원래 리뷰의 그 수)으로 되돌아갑니다 - 갈라져 나가
+     * 둬 본 수는 버려집니다(댓글로 저장했다면 그건 그대로 남아 있습니다).
+     */
+    data object BackToReviewFromBranch : GameUiEvent()
 }

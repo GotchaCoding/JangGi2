@@ -1,10 +1,13 @@
 package com.example.janggi2.data.repository
 
+import com.example.janggi2.data.local.database.dao.GameCommentDao
 import com.example.janggi2.data.local.database.dao.GameDao
 import com.example.janggi2.data.local.database.dao.GameReviewDao
 import com.example.janggi2.data.mapper.GameMapper
 import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.domain.model.Move
+import com.example.janggi2.domain.model.ReviewComment
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.repository.SavedGameInfo
 import com.example.janggi2.domain.repository.SavedReview
@@ -19,6 +22,7 @@ import javax.inject.Inject
 class GameRepositoryImpl @Inject constructor(
     private val gameDao: GameDao,
     private val gameReviewDao: GameReviewDao,
+    private val gameCommentDao: GameCommentDao,
     private val gameMapper: GameMapper
 ) : GameRepository {
 
@@ -103,5 +107,30 @@ class GameRepositoryImpl @Inject constructor(
 
     override suspend fun deleteReview(reviewId: Long) {
         gameReviewDao.deleteReviewById(reviewId)
+        gameCommentDao.deleteCommentsForReview(reviewId)
+    }
+
+    override suspend fun saveComment(
+        reviewId: Long,
+        message: String,
+        branchStartIndex: Int,
+        moves: List<Move>
+    ): Long {
+        val entity = gameMapper.toCommentEntity(
+            ReviewComment(
+                reviewId = reviewId,
+                message = message,
+                branchStartIndex = branchStartIndex,
+                moves = moves,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        return gameCommentDao.insertComment(entity)
+    }
+
+    override fun getCommentsForReview(reviewId: Long): Flow<List<ReviewComment>> {
+        return gameCommentDao.getCommentsForReview(reviewId).map { entities ->
+            entities.map { entity -> gameMapper.commentFromEntity(entity) }
+        }
     }
 }
