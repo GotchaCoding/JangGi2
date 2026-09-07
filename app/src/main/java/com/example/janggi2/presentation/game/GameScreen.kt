@@ -55,6 +55,7 @@ import com.example.janggi2.presentation.game.components.HighlightLayer
 import com.example.janggi2.presentation.game.components.HintLayer
 import com.example.janggi2.presentation.game.components.BoardArtwork
 import com.example.janggi2.presentation.game.components.JangGiBoard
+import com.example.janggi2.presentation.game.components.MAX_PIECE_SCALE
 import com.example.janggi2.presentation.game.components.MoveHistoryPanel
 import com.example.janggi2.presentation.game.components.NewGameDialog
 import com.example.janggi2.presentation.game.components.PieceView
@@ -499,8 +500,10 @@ internal fun BoardWithPieces(
         val boardWidth = minOf(maxWidth, maxHeight * BoardArtwork.ASPECT)
         val boardHeight = boardWidth / BoardArtwork.ASPECT
 
-        // 칸은 정사각형이고 그림 비율을 지켜 그리므로 가로·세로가 같습니다.
-        val cell = boardWidth * BoardArtwork.CELL
+        // 판 그림의 칸이 정사각형이 아니라서 가로·세로를 따로 계산합니다
+        // (실제 치수는 BoardArtwork 참고).
+        val cellWidth = boardWidth * BoardArtwork.CELL_WIDTH
+        val cellHeight = boardHeight * BoardArtwork.CELL_HEIGHT
         val gridOrigin = DpOffset(
             x = boardWidth * BoardArtwork.GRID_LEFT,
             y = boardHeight * BoardArtwork.GRID_TOP
@@ -513,14 +516,15 @@ internal fun BoardWithPieces(
                 // 계속 씁니다. 그래서 계산에 쓰는 값을 **빠짐없이** 키로 넘겨야 합니다.
                 // flipped 를 빠뜨렸다가, 판은 돌아갔는데 탭만 안 돌아가서 한 기물을
                 // 누르면 초 기물이 잡히는 버그가 났습니다.
-                .pointerInput(cell, gridOrigin, flipped) {
-                    val cellPx = cell.toPx()
+                .pointerInput(cellWidth, cellHeight, gridOrigin, flipped) {
+                    val cellWidthPx = cellWidth.toPx()
+                    val cellHeightPx = cellHeight.toPx()
                     val originX = gridOrigin.x.toPx()
                     val originY = gridOrigin.y.toPx()
                     detectTapGestures { offset ->
                         // 격자는 그림 안쪽에서 시작하므로 그만큼 빼고 나눕니다.
-                        val col = ((offset.x - originX) / cellPx).roundToInt()
-                        val row = ((offset.y - originY) / cellPx).roundToInt()
+                        val col = ((offset.x - originX) / cellWidthPx).roundToInt()
+                        val row = ((offset.y - originY) / cellHeightPx).roundToInt()
                         val position = Position(col, row)
 
                         if (position.isValid()) {
@@ -539,26 +543,32 @@ internal fun BoardWithPieces(
                 HighlightLayer(
                     selectedPosition = selectedPiece?.position?.oriented(flipped),
                     validMoves = validMoves.map { it.oriented(flipped) },
-                    cellWidth = cell,
-                    cellHeight = cell,
+                    cellWidth = cellWidth,
+                    cellHeight = cellHeight,
                     checkPosition = checkPosition?.oriented(flipped),
                     origin = gridOrigin
                 )
 
-                // 알마다 크기가 달라서, 칸 크기의 상자를 교차점에 맞춰 놓고 그 안에서
-                // 가운데 정렬합니다. 어떤 알이 얼마나 큰지는 PieceView 가 압니다.
+                // 알마다 크기가 달라서, 상자를 교차점에 맞춰 놓고 그 안에서 가운데
+                // 정렬합니다. 어떤 알이 얼마나 큰지는 PieceView 가 압니다.
+                // 알 크기의 기준은 짧은 쪽(cellHeight)으로 잡습니다 - 긴 쪽에 맞추면
+                // 위아래 칸끼리 겹칩니다.
+                val pieceCellSize = minOf(cellWidth, cellHeight)
+                // 상자는 가장 큰 알이 들어갈 만큼 잡아야 합니다 - 칸 크기로 잡으면
+                // 칸보다 큰 알(왕·차·포)이 상자에 갇혀 키운 만큼 안 보이고 잘립니다.
+                val pieceSlot = pieceCellSize * MAX_PIECE_SCALE
                 pieces.forEach { (position, piece) ->
                     val shown = position.oriented(flipped)
                     Box(
                         modifier = Modifier
                             .offset(
-                                x = gridOrigin.x + cell * shown.col.toFloat() - cell / 2f,
-                                y = gridOrigin.y + cell * shown.row.toFloat() - cell / 2f
+                                x = gridOrigin.x + cellWidth * shown.col.toFloat() - pieceSlot / 2f,
+                                y = gridOrigin.y + cellHeight * shown.row.toFloat() - pieceSlot / 2f
                             )
-                            .size(cell),
+                            .size(pieceSlot),
                         contentAlignment = Alignment.Center
                     ) {
-                        PieceView(piece = piece, cellSize = cell)
+                        PieceView(piece = piece, cellSize = pieceCellSize)
                     }
                 }
 
@@ -567,8 +577,8 @@ internal fun BoardWithPieces(
                     hintMove = hintMove?.let {
                         it.copy(from = it.from.oriented(flipped), to = it.to.oriented(flipped))
                     },
-                    cellWidth = cell,
-                    cellHeight = cell,
+                    cellWidth = cellWidth,
+                    cellHeight = cellHeight,
                     origin = gridOrigin
                 )
             }

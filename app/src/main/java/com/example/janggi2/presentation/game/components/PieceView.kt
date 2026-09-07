@@ -49,10 +49,29 @@ private fun scaleOf(piece: Piece): Float = when (piece) {
     is Piece.Horse, is Piece.Elephant -> 232f
     is Piece.Guard -> 212f
     is Piece.Soldier -> 200f
-} / 268f * KING_TO_CELL
+} / 268f * KING_TO_CELL * enlargementOf(piece)
+
+/**
+ * 졸·병과 사를 뺀 나머지를 [ENLARGED] 배로 키웁니다 - 알 그림이 칸에 비해 작아
+ * 보여서입니다. 작은 알 둘은 원래 크기로 둬서 서열 차이를 남겨 둡니다.
+ */
+private fun enlargementOf(piece: Piece): Float = when (piece) {
+    is Piece.Guard, is Piece.Soldier -> 1f
+    is Piece.General, is Piece.Chariot, is Piece.Cannon,
+    is Piece.Horse, is Piece.Elephant -> ENLARGED
+}
 
 /** 가장 큰 알(왕)의 캔버스를 칸 크기의 몇 배로 그릴지 */
 private const val KING_TO_CELL = 1f
+
+/** 졸·병·사를 뺀 알을 키우는 배율 */
+private const val ENLARGED = 1.1f
+
+/**
+ * 알 하나가 커질 수 있는 최대 배율(가장 큰 왕 기준). 알을 얹을 자리를 이만큼 잡아야
+ * 칸보다 큰 알이 잘리지 않습니다 - [com.example.janggi2.presentation.game.GameScreen] 에서 씁니다.
+ */
+internal const val MAX_PIECE_SCALE = KING_TO_CELL * ENLARGED
 
 /** 기물 종류가 늘면 컴파일러가 잡도록 when 을 씁니다. */
 private fun drawableOf(piece: Piece): Int = when (piece) {
