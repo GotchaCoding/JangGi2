@@ -232,20 +232,44 @@ std::string UciEngine::legalMoves(const std::string& positionCommand) {
     return moves;
 }
 
-std::string UciEngine::getBestMove(int thinkTimeMs) {
+// 탐색 제한을 세웁니다.
+//
+// startTime 은 LimitsType 생성자가 초기화하지 않는 유일한 멤버라 반드시 넣어야
+// 합니다. 원래 엔진은 UCI::go() 가 맨 먼저 넣어주는데 여기서는 그 경로를 타지
+// 않습니다. 빠뜨리면 스택 쓰레기값이 들어가고, 그게 현재 시각보다 크면 경과
+// 시간이 음수가 되어 movetime 을 영영 넘지 못해 탐색이 끝나지 않습니다.
+//
+// [depth] 가 있으면 깊이로 끊습니다. 이때도 movetime 을 같이 걸어 두는데, 느린
+// 기기에서 깊은 탐색이 화면을 오래 붙잡지 않게 하는 안전장치입니다.
+static Search::LimitsType makeLimits(int thinkTimeMs, int depth) {
+    Search::LimitsType limits;
+    limits.startTime = now();
+    limits.movetime = TimePoint(thinkTimeMs);
+    if (depth > 0) {
+        limits.depth = depth;
+    }
+    return limits;
+}
+
+// 깊이로 끊는 탐색은 "같은 국면이면 같은 답"이 목적이므로, 직전 탐색이 남긴
+// 해시와 이력을 지우고 시작합니다. 남겨 두면 바로 전에 어떤 국면을 탐색했느냐에
+// 따라(예: AI 리뷰가 여러 국면을 연속으로 돌린 뒤) 이동 순서와 컷오프가 달라져
+// 같은 국면인데도 결과가 흔들립니다. 시간으로 끊는 AI 착수 경로는 그대로 둡니다 -
+// 거기서는 해시를 재활용하는 편이 이득이고 매번 같은 수를 둘 이유도 없습니다.
+static void prepareDeterministicSearch(int depth) {
+    if (depth > 0) {
+        Search::clear();
+    }
+}
+
+std::string UciEngine::getBestMove(int thinkTimeMs, int depth) {
     if (!initialized || !position) {
         LOGE("Engine not ready");
         return "";
     }
 
-    // Setup search limits.
-    // startTime 은 LimitsType 생성자가 초기화하지 않는 유일한 멤버라 반드시 넣어야
-    // 합니다. 원래 엔진은 UCI::go() 가 맨 먼저 넣어주는데 여기서는 그 경로를 타지
-    // 않습니다. 빠뜨리면 스택 쓰레기값이 들어가고, 그게 현재 시각보다 크면 경과
-    // 시간이 음수가 되어 movetime 을 영영 넘지 못해 탐색이 끝나지 않습니다.
-    Search::LimitsType limits;
-    limits.startTime = now();
-    limits.movetime = TimePoint(thinkTimeMs);
+    prepareDeterministicSearch(depth);
+    Search::LimitsType limits = makeLimits(thinkTimeMs, depth);
 
     // Start search
     StateListPtr searchStates(new std::deque<StateInfo>(1));
@@ -272,16 +296,15 @@ std::string UciEngine::getBestMove(int thinkTimeMs) {
     return moveStr;
 }
 
-std::string UciEngine::getBestMoveWithScore(int thinkTimeMs) {
+std::string UciEngine::getBestMoveWithScore(int thinkTimeMs, int depth) {
     if (!initialized || !position) {
         LOGE("Engine not ready");
         return "";
     }
 
-    // getBestMove 와 같은 탐색 설정. 이유는 그쪽 주석 참고.
-    Search::LimitsType limits;
-    limits.startTime = now();
-    limits.movetime = TimePoint(thinkTimeMs);
+    // getBestMove 와 같은 탐색 설정. 이유는 makeLimits 주석 참고.
+    prepareDeterministicSearch(depth);
+    Search::LimitsType limits = makeLimits(thinkTimeMs, depth);
 
     StateListPtr searchStates(new std::deque<StateInfo>(1));
     Threads.start_thinking(*position, searchStates, limits, false);

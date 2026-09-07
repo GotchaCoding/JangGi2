@@ -125,9 +125,9 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeSetPosition(
 
 JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
-    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs) {
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs, jint depth) {
 
-    LOGD("nativeGetBestMove called: thinkTime=%dms", thinkTimeMs);
+    LOGD("nativeGetBestMove called: thinkTime=%dms depth=%d", thinkTimeMs, depth);
 
     if (enginePtr == 0) {
         LOGE("Null engine pointer in nativeGetBestMove");
@@ -136,7 +136,7 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
 
     try {
         UciEngine* engine = toEngine(enginePtr);
-        std::string bestMove = engine->getBestMove(static_cast<int>(thinkTimeMs));
+        std::string bestMove = engine->getBestMove(static_cast<int>(thinkTimeMs), static_cast<int>(depth));
 
         LOGD("Best move calculated: %s", bestMove.c_str());
         return env->NewStringUTF(bestMove.c_str());
@@ -152,9 +152,9 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
 
 JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMoveWithScore(
-    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs) {
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs, jint depth) {
 
-    LOGD("nativeGetBestMoveWithScore called: thinkTime=%dms", thinkTimeMs);
+    LOGD("nativeGetBestMoveWithScore called: thinkTime=%dms depth=%d", thinkTimeMs, depth);
 
     if (enginePtr == 0) {
         LOGE("Null engine pointer in nativeGetBestMoveWithScore");
@@ -163,7 +163,7 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMoveWithScore
 
     try {
         UciEngine* engine = toEngine(enginePtr);
-        std::string result = engine->getBestMoveWithScore(static_cast<int>(thinkTimeMs));
+        std::string result = engine->getBestMoveWithScore(static_cast<int>(thinkTimeMs), static_cast<int>(depth));
 
         LOGD("Best move with score: %s", result.c_str());
         return env->NewStringUTF(result.c_str());

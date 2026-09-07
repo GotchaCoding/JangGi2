@@ -45,21 +45,23 @@ Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeSetPosition(
  * Calculate best move
  * @param enginePtr Engine pointer
  * @param thinkTimeMs Time to think in milliseconds
+ * @param depth 0보다 크면 시간 대신 이 깊이까지 탐색(해시를 비우고 시작), 0이면 시간으로만
  * @return Best move in UCI notation (e.g., "a0b0") or empty string on error
  */
 JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMove(
-    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs);
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs, jint depth);
 
 /**
  * Calculate best move together with its evaluation score, for AI review.
  * @param enginePtr Engine pointer
  * @param thinkTimeMs Time to think in milliseconds
+ * @param depth 0보다 크면 시간 대신 이 깊이까지 탐색(해시를 비우고 시작), 0이면 시간으로만
  * @return "<uci move> cp<n>" | "<uci move> mate<n>" | "" (no legal moves)
  */
 JNIEXPORT jstring JNICALL
 Java_com_example_janggi2_data_ai_FairyStockfishEngine_nativeGetBestMoveWithScore(
-    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs);
+    JNIEnv* env, jobject thiz, jlong enginePtr, jint thinkTimeMs, jint depth);
 
 /**
  * Judge repetition rules, which need the move history rather than just a board

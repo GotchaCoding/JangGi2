@@ -30,6 +30,9 @@ class FairyStockfishEngine @Inject constructor(
     companion object {
         private const val TAG = "FairyStockfishEngine"
 
+        /** 네이티브 탐색에 넘기는 depth 값 중 "깊이로 끊지 말고 시간으로 끊어라". */
+        private const val TIME_LIMITED = 0
+
         init {
             try {
                 System.loadLibrary("fairystockfish_jni")
@@ -72,7 +75,8 @@ class FairyStockfishEngine @Inject constructor(
     override suspend fun getBestMove(
         gameState: GameState,
         thinkTimeMs: Int,
-        skillLevel: Int
+        skillLevel: Int,
+        depth: Int
     ): Move? {
         require(skillLevel in 1..20) {
             "Skill level must be between 1 and 20, got: $skillLevel"
@@ -88,8 +92,8 @@ class FairyStockfishEngine @Inject constructor(
                     Log.d(TAG, "Setting position: $position")
                     nativeSetPosition(enginePtr, position)
 
-                    Log.d(TAG, "Searching (skill=$skillLevel, ${thinkTimeMs}ms)")
-                    val uciMove = nativeGetBestMove(enginePtr, thinkTimeMs)
+                    Log.d(TAG, "Searching (skill=$skillLevel, ${thinkTimeMs}ms, depth=$depth)")
+                    val uciMove = nativeGetBestMove(enginePtr, thinkTimeMs, depth)
                     if (uciMove.isEmpty()) {
                         Log.w(TAG, "No best move returned from engine")
                         return@withLock null
@@ -124,7 +128,9 @@ class FairyStockfishEngine @Inject constructor(
                     val position = uciProtocol.formatPosition(gameState)
                     nativeSetPosition(enginePtr, position)
 
-                    val result = nativeGetBestMoveWithScore(enginePtr, thinkTimeMs)
+                    // AI 리뷰는 국면 수십 개를 연달아 돌리므로 시간으로 끊습니다 -
+                    // 깊이로 바꾸면 국면마다 걸리는 시간이 들쭉날쭉해집니다.
+                    val result = nativeGetBestMoveWithScore(enginePtr, thinkTimeMs, TIME_LIMITED)
                     if (result.isEmpty()) {
                         Log.w(TAG, "No evaluation returned from engine")
                         return@withLock null
@@ -228,8 +234,9 @@ class FairyStockfishEngine @Inject constructor(
     private external fun nativeDestroy(enginePtr: Long)
     private external fun nativeSetDifficulty(enginePtr: Long, level: Int)
     private external fun nativeSetPosition(enginePtr: Long, uciPosition: String)
-    private external fun nativeGetBestMove(enginePtr: Long, thinkTimeMs: Int): String
-    private external fun nativeGetBestMoveWithScore(enginePtr: Long, thinkTimeMs: Int): String
+    // depth 0 = 시간으로만 끊기, 0보다 크면 그 깊이까지(해시를 비우고) 탐색
+    private external fun nativeGetBestMove(enginePtr: Long, thinkTimeMs: Int, depth: Int): String
+    private external fun nativeGetBestMoveWithScore(enginePtr: Long, thinkTimeMs: Int, depth: Int): String
     private external fun nativeGameOutcome(enginePtr: Long, uciPosition: String): String
     private external fun nativeLegalMoves(enginePtr: Long, uciPosition: String): String
 }

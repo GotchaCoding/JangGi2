@@ -27,7 +27,7 @@ class ReviewGameUseCaseTest {
             private set
 
         override suspend fun initialize() {}
-        override suspend fun getBestMove(gameState: GameState, thinkTimeMs: Int, skillLevel: Int): Move? = null
+        override suspend fun getBestMove(gameState: GameState, thinkTimeMs: Int, skillLevel: Int, depth: Int): Move? = null
 
         override suspend fun evaluate(gameState: GameState, thinkTimeMs: Int, skillLevel: Int): Evaluation? {
             val result = evaluations.getOrNull(evaluateCallCount)

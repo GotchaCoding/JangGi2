@@ -25,9 +25,18 @@ interface AiEngine {
      * @param gameState Current state of the game
      * @param thinkTimeMs Maximum time to think in milliseconds
      * @param skillLevel 1 (beginner) ~ 20 (full strength)
+     * @param depth 0보다 크면 시간 대신 이 깊이까지 탐색하고, 탐색 전에 엔진의 해시를
+     *   비웁니다. 같은 국면에 늘 같은 수가 나와야 하는 곳(힌트)에서 씁니다 - 시간으로
+     *   끊으면 기기 부하에 따라 도달 깊이가 달라져 누를 때마다 답이 바뀝니다.
+     *   0이면 기존대로 [thinkTimeMs] 로만 끊습니다(AI 착수).
      * @return Best move calculated by the engine, or null if no legal moves available
      */
-    suspend fun getBestMove(gameState: GameState, thinkTimeMs: Int = 2000, skillLevel: Int = 20): Move?
+    suspend fun getBestMove(
+        gameState: GameState,
+        thinkTimeMs: Int = 2000,
+        skillLevel: Int = 20,
+        depth: Int = 0
+    ): Move?
 
     /**
      * Evaluates the given position - AI 리뷰가 국면마다 점수를 매길 때 씁니다.
