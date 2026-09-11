@@ -1,8 +1,10 @@
 package com.example.janggi2.di
 
 import com.example.janggi2.data.imageprocessing.GridDetector
+import com.example.janggi2.data.repository.AuthRepositoryImpl
 import com.example.janggi2.data.repository.BoardImportRepositoryImpl
 import com.example.janggi2.data.repository.GameRepositoryImpl
+import com.example.janggi2.domain.repository.AuthRepository
 import com.example.janggi2.domain.repository.BoardImportRepository
 import com.example.janggi2.domain.repository.GameRepository
 import dagger.Binds
@@ -30,6 +32,12 @@ abstract class RepositoryModule {
     abstract fun bindBoardImportRepository(
         impl: BoardImportRepositoryImpl
     ): BoardImportRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAuthRepository(
+        impl: AuthRepositoryImpl
+    ): AuthRepository
 
     companion object {
         @Provides

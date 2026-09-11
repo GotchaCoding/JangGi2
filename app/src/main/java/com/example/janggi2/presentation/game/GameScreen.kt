@@ -14,8 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +81,9 @@ fun GameScreen(
     onNavigateToImport: () -> Unit = {},
     onNavigateToVideoImport: () -> Unit = {},
     onNavigateToDebug: () -> Unit = {},
-    onNavigateToPuzzle: (GameState, GameReview, Player) -> Unit = { _, _, _ -> }
+    onNavigateToPuzzle: (GameState, GameReview, Player) -> Unit = { _, _, _ -> },
+    currentUserEmail: String? = null,
+    onSignOut: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
@@ -126,17 +132,45 @@ fun GameScreen(
             // 계속 안 보여야 합니다.
             val hideTitle = isReplay || uiState.currentReviewId != null
             if (!hideTitle) {
-                Text(
-                    text = uiState.currentGameName ?: "이름 없는 대국",
-                    style = MaterialTheme.typography.headlineSmall,
-                    maxLines = 1,
-                    modifier = Modifier.padding(
-                        top = 16.dp,
-                        bottom = 8.dp,
-                        start = 16.dp,
-                        end = 16.dp
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 8.dp, start = 16.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = uiState.currentGameName ?: "이름 없는 대국",
+                        style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
                     )
-                )
+                    if (currentUserEmail != null) {
+                        var showAccountMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showAccountMenu = true }) {
+                                Icon(Icons.Default.AccountCircle, contentDescription = "계정")
+                            }
+                            DropdownMenu(
+                                expanded = showAccountMenu,
+                                onDismissRequest = { showAccountMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(currentUserEmail) },
+                                    onClick = {},
+                                    enabled = false
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("로그아웃") },
+                                    onClick = {
+                                        showAccountMenu = false
+                                        onSignOut()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // 점수는 판에서 계산하므로 복기 중에도 그 시점 점수가 그대로 맞습니다.

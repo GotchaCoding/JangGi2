@@ -16,7 +16,7 @@ import com.example.janggi2.data.local.database.entity.GameReviewEntity
  */
 @Database(
     entities = [GameEntity::class, GameReviewEntity::class, GameCommentEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class JangGiDatabase : RoomDatabase() {
@@ -115,6 +115,20 @@ abstract class JangGiDatabase : RoomDatabase() {
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE game_comments ADD COLUMN branchStartIndex INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Migration from version 7 to 8: Add remoteId to saved_games so each saved game has
+         * a stable cross-device identity for Firestore 클라우드 동기화. 로컬 auto-increment
+         * id는 기기마다 달라져서 동기화 키로 쓸 수 없습니다. 기존 행에는
+         * randomblob으로 만든 값을 채워 넣습니다 (SQLite에는 UUID() 함수가 없음).
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE saved_games ADD COLUMN remoteId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE saved_games SET remoteId = lower(hex(randomblob(16))) WHERE remoteId = ''")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_saved_games_remoteId ON saved_games(remoteId)")
             }
         }
     }
