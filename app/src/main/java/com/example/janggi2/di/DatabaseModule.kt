@@ -37,7 +37,8 @@ object DatabaseModule {
                 JangGiDatabase.MIGRATION_3_4,
                 JangGiDatabase.MIGRATION_4_5,
                 JangGiDatabase.MIGRATION_5_6,
-                JangGiDatabase.MIGRATION_6_7
+                JangGiDatabase.MIGRATION_6_7,
+                JangGiDatabase.MIGRATION_7_8
             )
             .build()
     }

@@ -15,3 +15,7 @@ local.properties
 
 # Kotlin 컴파일러가 만드는 세션·에러 로그
 .kotlin/
+
+# Firebase 프로젝트 설정(API 키 포함) - 개발자마다 다른 Firebase 프로젝트를 쓸 수 있고,
+# 실수로 공유 저장소에 올리지 않도록 기본적으로 제외합니다.
+/app/google-services.json

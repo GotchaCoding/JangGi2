@@ -1,12 +1,13 @@
 package com.example.janggi2.data.local.database.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
  * Room entity representing a saved game.
  */
-@Entity(tableName = "saved_games")
+@Entity(tableName = "saved_games", indices = [Index(value = ["remoteId"], unique = true)])
 data class GameEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -31,5 +32,10 @@ data class GameEntity(
     /** 초쪽 기사 급수(예: "3급", "아마 1단"). */
     val choRank: String? = null,
     /** 한쪽 기사 급수. */
-    val hanRank: String? = null
+    val hanRank: String? = null,
+    /**
+     * 기기 간 동기화를 위한 안정적인 식별자(UUID), 생성 시 한 번 부여됩니다. 로컬
+     * auto-increment [id]는 기기마다 값이 달라 Firestore 문서 ID로 쓸 수 없습니다.
+     */
+    val remoteId: String = ""
 )

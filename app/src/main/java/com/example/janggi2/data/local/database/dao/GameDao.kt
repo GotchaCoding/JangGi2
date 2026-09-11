@@ -24,6 +24,9 @@ interface GameDao {
     @Query("SELECT * FROM saved_games WHERE name = :name LIMIT 1")
     suspend fun getGameByName(name: String): GameEntity?
 
+    @Query("SELECT * FROM saved_games WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getGameByRemoteId(remoteId: String): GameEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGame(game: GameEntity): Long
 

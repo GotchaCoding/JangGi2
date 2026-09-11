@@ -7,7 +7,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.example.janggi2.domain.model.GameState
+import com.example.janggi2.presentation.auth.AccountMenuViewModel
+import com.example.janggi2.presentation.auth.LoginScreen
+import com.example.janggi2.presentation.auth.LoginViewModel
 import com.example.janggi2.presentation.debug.LineDetectionDebugScreen
 import com.example.janggi2.presentation.game.GameScreen
 import com.example.janggi2.presentation.game.GameViewModel
@@ -23,15 +28,38 @@ import com.example.janggi2.presentation.videoimport.VideoImportScreen
 @Composable
 fun JangGiNavHost(
     navController: NavHostController,
+    startDestination: String = Screen.Game.route,
     modifier: Modifier = Modifier
 ) {
     NavHost(
         navController = navController,
-        startDestination = Screen.Game.route,
+        startDestination = startDestination,
         modifier = modifier
     ) {
+        composable(Screen.Login.route) {
+            val viewModel: LoginViewModel = hiltViewModel()
+            val uiState by viewModel.uiState.collectAsState()
+
+            LaunchedEffect(uiState.signedInUser) {
+                if (uiState.signedInUser != null) {
+                    navController.navigate(Screen.Game.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
+                    }
+                }
+            }
+
+            LoginScreen(
+                uiState = uiState,
+                onGoogleIdTokenReceived = viewModel::onGoogleIdTokenReceived,
+                onSignInFailed = viewModel::onSignInFailed,
+                onDismissError = viewModel::dismissError
+            )
+        }
+
         composable(Screen.Game.route) { backStackEntry ->
             val viewModel: GameViewModel = hiltViewModel()
+            val accountMenuViewModel: AccountMenuViewModel = hiltViewModel()
+            val currentUser by accountMenuViewModel.currentUser.collectAsState()
 
             // Handle game loading from savedStateHandle
             val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
@@ -98,6 +126,13 @@ fun JangGiNavHost(
                     PuzzleStateHolder.pendingGameReview = review
                     PuzzleStateHolder.pendingViewpoint = viewpoint
                     navController.navigate(Screen.Puzzle.route)
+                },
+                currentUserEmail = currentUser?.email,
+                onSignOut = {
+                    accountMenuViewModel.signOut()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
                 }
             )
         }

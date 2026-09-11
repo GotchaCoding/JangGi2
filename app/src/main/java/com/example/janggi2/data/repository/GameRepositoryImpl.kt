@@ -1,29 +1,43 @@
 package com.example.janggi2.data.repository
 
+import android.util.Log
 import com.example.janggi2.data.local.database.dao.GameCommentDao
 import com.example.janggi2.data.local.database.dao.GameDao
 import com.example.janggi2.data.local.database.dao.GameReviewDao
+import com.example.janggi2.data.local.database.entity.GameEntity
+import com.example.janggi2.data.mapper.GameCloudMapper
 import com.example.janggi2.data.mapper.GameMapper
 import com.example.janggi2.domain.model.GameReview
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.domain.model.Move
 import com.example.janggi2.domain.model.ReviewComment
+import com.example.janggi2.domain.repository.AuthRepository
 import com.example.janggi2.domain.repository.GameRepository
 import com.example.janggi2.domain.repository.SavedGameInfo
 import com.example.janggi2.domain.repository.SavedReview
 import com.example.janggi2.domain.repository.SavedReviewInfo
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 
+private const val TAG = "GameRepositoryImpl"
+private const val GAMES_COLLECTION = "games"
+private const val USERS_COLLECTION = "users"
+
 /**
- * Implementation of GameRepository using Room database.
+ * Implementation of GameRepository using Room database, with best-effort push/pull sync of
+ * saved_games to Firestore when signed in. Cloud calls never throw - a failed push/pull/delete
+ * is logged and swallowed so local persistence always succeeds regardless of network/auth state.
  */
 class GameRepositoryImpl @Inject constructor(
     private val gameDao: GameDao,
     private val gameReviewDao: GameReviewDao,
     private val gameCommentDao: GameCommentDao,
-    private val gameMapper: GameMapper
+    private val gameMapper: GameMapper,
+    private val firestore: FirebaseFirestore,
+    private val authRepository: AuthRepository
 ) : GameRepository {
 
     override suspend fun saveGame(
@@ -35,7 +49,9 @@ class GameRepositoryImpl @Inject constructor(
         hanRank: String?
     ): Long {
         val entity = gameMapper.toEntity(gameState, name, choPlayerName, hanPlayerName, choRank, hanRank)
-        return gameDao.insertGame(entity)
+        val id = gameDao.insertGame(entity)
+        pushToCloud(entity)
+        return id
     }
 
     override suspend fun autoSave(gameState: GameState) {
@@ -75,11 +91,56 @@ class GameRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteGame(gameId: Long) {
+        val entity = gameDao.getGameById(gameId)
         gameDao.deleteGameById(gameId)
+        entity?.let { deleteFromCloud(it.remoteId) }
     }
 
     override suspend fun deleteAllGames() {
         gameDao.deleteAllGames()
+    }
+
+    override suspend fun pullFromCloud(): Int {
+        val uid = authRepository.getCurrentUser()?.uid ?: return 0
+        return try {
+            val snapshot = firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(GAMES_COLLECTION).get().await()
+            var pulled = 0
+            for (doc in snapshot.documents) {
+                if (gameDao.getGameByRemoteId(doc.id) != null) continue
+                val entity = doc.data?.let { GameCloudMapper.fromMap(it, doc.id) } ?: continue
+                gameDao.insertGame(entity)
+                pulled++
+            }
+            pulled
+        } catch (e: Exception) {
+            Log.w(TAG, "Cloud pull failed", e)
+            0
+        }
+    }
+
+    private suspend fun pushToCloud(entity: GameEntity) {
+        if (entity.name == "auto_save") return
+        val uid = authRepository.getCurrentUser()?.uid ?: return
+        try {
+            firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(GAMES_COLLECTION).document(entity.remoteId)
+                .set(GameCloudMapper.toMap(entity)).await()
+        } catch (e: Exception) {
+            Log.w(TAG, "Cloud push failed, staying local-only until next write", e)
+        }
+    }
+
+    private suspend fun deleteFromCloud(remoteId: String) {
+        if (remoteId.isEmpty()) return
+        val uid = authRepository.getCurrentUser()?.uid ?: return
+        try {
+            firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(GAMES_COLLECTION).document(remoteId)
+                .delete().await()
+        } catch (e: Exception) {
+            Log.w(TAG, "Cloud delete failed", e)
+        }
     }
 
     override suspend fun saveReview(gameState: GameState, review: GameReview, name: String): Long {

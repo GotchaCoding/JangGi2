@@ -56,7 +56,8 @@ class GameMapper {
             choPlayerName = choPlayerName,
             hanPlayerName = hanPlayerName,
             choRank = choRank,
-            hanRank = hanRank
+            hanRank = hanRank,
+            remoteId = java.util.UUID.randomUUID().toString()
         )
     }
 

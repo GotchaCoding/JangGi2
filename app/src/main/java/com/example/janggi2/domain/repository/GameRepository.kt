@@ -64,6 +64,13 @@ interface GameRepository {
     suspend fun deleteAllGames()
 
     /**
+     * 로그인한 계정 기준으로 Firestore에 저장된 대국 중 로컬에 없는 것만 내려받아 저장합니다.
+     * 로그아웃 상태이거나 네트워크 실패 시 예외를 던지지 않고 0을 반환합니다.
+     * @return 새로 내려받아 저장한 대국 수
+     */
+    suspend fun pullFromCloud(): Int
+
+    /**
      * Saves an AI review, independent of whether the underlying game was itself saved.
      * @return The ID of the saved review
      */
