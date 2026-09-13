@@ -13,7 +13,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.janggi2"
+        applicationId = "com.janggischool"
         minSdk = 34
         targetSdk = 36
         versionCode = 1

@@ -19,3 +19,6 @@ local.properties
 # Firebase 프로젝트 설정(API 키 포함) - 개발자마다 다른 Firebase 프로젝트를 쓸 수 있고,
 # 실수로 공유 저장소에 올리지 않도록 기본적으로 제외합니다.
 /app/google-services.json
+
+# Android Studio 의 Generate Signed Bundle/APK 산출물(수십 MB 바이너리)
+/app/release/
