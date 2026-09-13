@@ -60,6 +60,11 @@ target_link_libraries(fairystockfish_jni
     log
 )
 
+# 16KB 페이지 크기 기기(Android 15+) 지원. 이게 없으면 ELF LOAD 세그먼트가 4KB로
+# 정렬돼서 기기가 "16KB와 호환되지 않습니다" 경고를 띄우고, Play Store 의 16KB
+# 요건도 통과하지 못합니다. NDK 28 부터는 기본값이지만 지금 쓰는 27 은 아닙니다.
+target_link_options(fairystockfish_jni PRIVATE "-Wl,-z,max-page-size=16384")
+
 # Strip symbols in release builds to reduce binary size
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_custom_command(TARGET fairystockfish_jni POST_BUILD

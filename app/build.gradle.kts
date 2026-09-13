@@ -11,6 +11,8 @@ plugins {
 android {
     namespace = "com.example.janggi2"
     compileSdk = 36
+    // 네이티브 빌드 결과(특히 16KB 페이지 정렬)가 기기·CI 마다 달라지지 않도록 고정합니다.
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.janggischool"
@@ -101,11 +103,15 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     implementation(libs.kotlinx.coroutines.play.services)
 
-    // OpenCV for circle detection
+    // OpenCV for circle detection.
+    // 공식 org.opencv 배포판입니다. 예전엔 com.quickbirdstudios 래퍼를 썼지만 4.5.3.0
+    // 에서 멈춰 16KB 페이지 정렬을 지원하지 않습니다. 자바 패키지(org.opencv)는 같습니다.
     implementation(libs.opencv)
 
-    // TFLite for on-device piece-type classification
-    implementation(libs.tensorflow.lite)
+    // On-device piece-type classification.
+    // LiteRT 는 TFLite 의 후속 배포로, 1.x 는 org.tensorflow.lite 패키지를 그대로
+    // 유지합니다. org.tensorflow:tensorflow-lite 는 2.16.1 까지도 16KB 정렬이 아닙니다.
+    implementation(libs.litert)
 
     // Coil for image loading
     implementation(libs.coil.compose)
