@@ -55,6 +55,9 @@ android {
     }
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG 로 디버그 전용 UI(디버그 버튼)를 가리기 위해 켭니다.
+        // AGP 8부터는 기본으로 생성되지 않습니다.
+        buildConfig = true
     }
 
     externalNativeBuild {

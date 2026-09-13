@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.janggi2.BuildConfig
 
 private val COMPACT_PADDING = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
 
@@ -119,7 +120,8 @@ fun GameControls(
 
         // Middle row: Save, Load, Import, AI Settings
         // 버튼이 최대 7개까지 늘어날 수 있어(저장/불러오기/사진 불러오기/동영상
-        // 불러오기/AI 리뷰/AI 설정/디버그) 화면 폭에 다 안 들어가면 Row는 그냥 잘리고
+        // 불러오기/AI 리뷰/AI 설정, 디버그 빌드에서는 디버그까지) 화면 폭에 다 안
+        // 들어가면 Row는 그냥 잘리고
         // 넘친 버튼이 안 보입니다. FlowRow 는 다 안 들어가면 자동으로 다음 줄로
         // 내려서 항상 모든 버튼이 보이게 합니다.
         FlowRow(
@@ -157,8 +159,13 @@ fun GameControls(
                 }
             }
 
-            TextButton(onClick = onDebugClick) {
-                Text("디버그")
+            // 선 인식 디버그 화면은 개발 중에만 쓰는 도구라서 릴리즈 빌드에는 넣지
+            // 않습니다. BuildConfig.DEBUG 는 컴파일 시점 상수여서 릴리즈에서는 이
+            // 분기 자체가 R8 에 의해 제거됩니다.
+            if (BuildConfig.DEBUG) {
+                TextButton(onClick = onDebugClick) {
+                    Text("디버그")
+                }
             }
         }
 
