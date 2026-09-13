@@ -42,6 +42,19 @@ class AuthRepositoryImpl @Inject constructor(
         firebaseAuth.signOut()
     }
 
+    override suspend fun deleteAccount(reAuthIdToken: String): Result<Unit> = try {
+        val user = firebaseAuth.currentUser
+            ?: return Result.failure(IllegalStateException("No signed-in user to delete"))
+        // 재인증 없이 delete() 를 부르면 로그인이 오래된 세션에서
+        // FirebaseAuthRecentLoginRequiredException 으로 실패합니다.
+        val credential = GoogleAuthProvider.getCredential(reAuthIdToken, null)
+        user.reauthenticate(credential).await()
+        user.delete().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     override fun getCurrentUser(): AuthUser? = firebaseAuth.currentUser?.toAuthUser()
 
     private fun FirebaseUser.toAuthUser() = AuthUser(

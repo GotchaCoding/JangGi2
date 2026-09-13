@@ -83,7 +83,8 @@ fun GameScreen(
     onNavigateToDebug: () -> Unit = {},
     onNavigateToPuzzle: (GameState, GameReview, Player) -> Unit = { _, _, _ -> },
     currentUserEmail: String? = null,
-    onSignOut: () -> Unit = {}
+    onSignOut: () -> Unit = {},
+    onDeleteAccountClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isReplay = uiState.gameState.isReplayMode
@@ -165,6 +166,18 @@ fun GameScreen(
                                     onClick = {
                                         showAccountMenu = false
                                         onSignOut()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "계정 삭제",
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    onClick = {
+                                        showAccountMenu = false
+                                        onDeleteAccountClick()
                                     }
                                 )
                             }

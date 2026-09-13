@@ -24,4 +24,8 @@ interface GameCommentDao {
 
     @Query("DELETE FROM game_comments WHERE reviewId = :reviewId")
     suspend fun deleteCommentsForReview(reviewId: Long)
+
+    /** 계정 삭제 시 기기에 남은 댓글을 모두 비웁니다. */
+    @Query("DELETE FROM game_comments")
+    suspend fun deleteAllComments()
 }

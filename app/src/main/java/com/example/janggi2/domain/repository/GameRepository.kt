@@ -71,6 +71,17 @@ interface GameRepository {
     suspend fun pullFromCloud(): Int
 
     /**
+     * 계정 삭제에 앞서 이 사용자의 기보를 클라우드와 기기에서 모두 지웁니다.
+     *
+     * 기기 쪽까지 지우는 이유: `saved_games` 에는 어느 계정의 것인지 구분하는 열이
+     * 없어서, 남겨두면 같은 기기에서 다음에 로그인한 사람에게 그대로 보입니다.
+     *
+     * 클라우드 삭제가 실패하면(네트워크 등) 예외를 던집니다 - 지워지지 않은 데이터를
+     * 남긴 채 계정만 없애면 사용자가 다시 지울 방법이 없어지기 때문입니다.
+     */
+    suspend fun purgeAllUserData()
+
+    /**
      * Saves an AI review, independent of whether the underlying game was itself saved.
      * @return The ID of the saved review
      */

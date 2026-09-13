@@ -119,6 +119,24 @@ class GameRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun purgeAllUserData() {
+        // 클라우드를 먼저 지웁니다. 여기서 실패하면 예외가 나가고 계정은 살아 있어,
+        // 사용자가 다시 시도할 수 있습니다(순서를 뒤집으면 지울 방법이 사라집니다).
+        val uid = authRepository.getCurrentUser()?.uid
+        if (uid != null) {
+            val snapshot = firestore.collection(USERS_COLLECTION).document(uid)
+                .collection(GAMES_COLLECTION).get().await()
+            for (doc in snapshot.documents) {
+                doc.reference.delete().await()
+            }
+        }
+        // 기기에 남은 기보·리뷰·댓글도 지웁니다. 다음에 이 기기로 로그인한 사람에게
+        // 보이면 안 됩니다.
+        gameDao.deleteAllGames()
+        gameReviewDao.deleteAllReviews()
+        gameCommentDao.deleteAllComments()
+    }
+
     private suspend fun pushToCloud(entity: GameEntity) {
         if (entity.name == "auto_save") return
         val uid = authRepository.getCurrentUser()?.uid ?: return

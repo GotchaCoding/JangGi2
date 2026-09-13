@@ -9,8 +9,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.example.janggi2.domain.model.GameState
 import com.example.janggi2.presentation.auth.AccountMenuViewModel
+import com.example.janggi2.presentation.auth.DeleteAccountFlow
 import com.example.janggi2.presentation.auth.LoginScreen
 import com.example.janggi2.presentation.auth.LoginViewModel
 import com.example.janggi2.presentation.debug.LineDetectionDebugScreen
@@ -60,6 +64,27 @@ fun JangGiNavHost(
             val viewModel: GameViewModel = hiltViewModel()
             val accountMenuViewModel: AccountMenuViewModel = hiltViewModel()
             val currentUser by accountMenuViewModel.currentUser.collectAsState()
+            val accountUiState by accountMenuViewModel.uiState.collectAsState()
+            var showDeleteAccountConfirm by remember { mutableStateOf(false) }
+
+            // 로그아웃과 달리 계정 삭제는 되돌릴 수 없으므로, 끝난 뒤에도 같은 자리
+            // (로그인 화면)로 보내되 백스택을 통째로 비웁니다.
+            LaunchedEffect(accountUiState.isDeleted) {
+                if (accountUiState.isDeleted) {
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                }
+            }
+
+            DeleteAccountFlow(
+                showConfirm = showDeleteAccountConfirm,
+                uiState = accountUiState,
+                onConfirmDismiss = { showDeleteAccountConfirm = false },
+                onReAuthTokenReceived = accountMenuViewModel::deleteAccount,
+                onReAuthFailed = accountMenuViewModel::onDeleteFailed,
+                onDismissError = accountMenuViewModel::dismissDeleteError
+            )
 
             // Handle game loading from savedStateHandle
             val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
@@ -128,6 +153,7 @@ fun JangGiNavHost(
                     navController.navigate(Screen.Puzzle.route)
                 },
                 currentUserEmail = currentUser?.email,
+                onDeleteAccountClick = { showDeleteAccountConfirm = true },
                 onSignOut = {
                     accountMenuViewModel.signOut()
                     navController.navigate(Screen.Login.route) {

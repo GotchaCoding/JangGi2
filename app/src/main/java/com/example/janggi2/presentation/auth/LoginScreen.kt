@@ -17,15 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialException
-import com.example.janggi2.R
 import com.example.janggi2.presentation.common.ConfirmDialog
 import com.example.janggi2.ui.theme.JangGi2Theme
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
@@ -46,31 +39,9 @@ fun LoginScreen(
                 enabled = !uiState.isLoading,
                 onClick = {
                     scope.launch {
-                        try {
-                            // R.string.default_web_client_id 는 google-services 플러그인이
-                            // google-services.json으로부터 빌드 시 자동 생성합니다.
-                            // 클라이언트 ID를 코드에 직접 적지 마세요.
-                            val googleIdOption = GetGoogleIdOption.Builder()
-                                .setFilterByAuthorizedAccounts(false)
-                                .setServerClientId(context.getString(R.string.default_web_client_id))
-                                .build()
-                            val request = GetCredentialRequest.Builder()
-                                .addCredentialOption(googleIdOption)
-                                .build()
-                            val result = CredentialManager.create(context)
-                                .getCredential(context, request)
-                            val credential = result.credential
-                            if (credential is CustomCredential &&
-                                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                            ) {
-                                val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                                onGoogleIdTokenReceived(token)
-                            } else {
-                                onSignInFailed("지원하지 않는 로그인 방식입니다.")
-                            }
-                        } catch (e: GetCredentialException) {
-                            onSignInFailed("로그인이 취소되었거나 실패했습니다.")
-                        }
+                        requestGoogleIdToken(context)
+                            .onSuccess(onGoogleIdTokenReceived)
+                            .onFailure { onSignInFailed("로그인이 취소되었거나 실패했습니다.") }
                     }
                 }
             ) {
