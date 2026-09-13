@@ -2,6 +2,7 @@ package com.example.janggi2.presentation.game.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ private val COMPACT_PADDING = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
 /**
  * Game control buttons (Undo, Redo, Save, Load, Reset)
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GameControls(
     canUndo: Boolean,
