@@ -6,10 +6,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Permissions for image import feature -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
+    <!--
+      사진·동영상 불러오기는 READ_MEDIA_IMAGES 같은 미디어 권한이 필요 없습니다.
+      ActivityResultContracts.GetContent() 로 시스템 선택기를 띄우고, 사용자가 직접
+      고른 파일 하나에 대해서만 임시 URI 권한을 받아 읽습니다(MediaStore 를 직접
+      조회하지 않음). 권한을 선언하면 Play Console 의 "사진 및 동영상 권한" 선언
+      대상이 되고 스토어에 불필요한 권한이 노출되므로 두지 않습니다.
+    -->
 
     <application
         android:name=".JangGi2Application"
